@@ -928,14 +928,32 @@ def main():
     # --- タブ3: 履歴検索・編集・削除 ---
     with tab3:
         st.subheader("🔍 データ履歴の検索・編集・削除")
+        # 検索条件の入力欄（例: 3列または4列のカラム内）
+        sort_order = st.selectbox(
+            "並び順",
+            options=["登録が新しい順", "登録が古い順", "レシート日付が新しい順", "レシート日付が古い順", "金額が高い順", "金額が安い順"],
+            index=0
+        )
         search_kw = st.text_input("🔍 キーワード検索 (店舗名、品名、カテゴリー、日付)", placeholder="例: Amazon, シャンプー, 食費, 2026/08")
-        records = get_all_receipts(search_kw)
+        records = get_all_receipts(search_kw, sort_order=sort_order)
 
         if search_kw.strip():
             hit_sum = sum(r["amount"] for r in records)
             st.caption(f"検索結果: **{len(records)} 件** 見つかりました（合計支出: **¥{hit_sum:,}**）")
 
-        if records:
+        if records:# --- 並び替え（ソート）処理 ---
+            if sort_order == "登録が新しい順":
+                records = sorted(records, key=lambda x: x["id"], reverse=True)
+            elif sort_order == "登録が古い順":
+                records = sorted(records, key=lambda x: x["id"], reverse=False)
+            elif sort_order == "レシート日付が新しい順":
+                records = sorted(records, key=lambda x: (str(x["date"]), x["id"]), reverse=True)
+            elif sort_order == "レシート日付が古い順":
+                records = sorted(records, key=lambda x: (str(x["date"]), x["id"]), reverse=False)
+            elif sort_order == "金額が高い順":
+                records = sorted(records, key=lambda x: x["amount"], reverse=True)
+            elif sort_order == "金額が安い順":
+                records = sorted(records, key=lambda x: x["amount"], reverse=False)
             for rec in records:
                 r_id = rec["id"]
                 store_display = f"【{rec['store_name']}】" if rec['store_name'] else ""
