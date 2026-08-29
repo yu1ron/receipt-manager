@@ -1,0 +1,11 @@
+streamlit
+google-genai
+openai
+pillow
+pillow-heif
+pytesseract
+pandas
+plotly
+PyMuPDF
+supabase
+toml
