@@ -471,7 +471,7 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
         if img.mode != "RGB":
             img = img.convert("RGB")
             
-        # --- 高速化: スマホ写真の自動リサイズ＆圧縮 ---
+        # スマホ写真の自動リサイズ＆圧縮（高速化）
         max_dim = 1600
         if max(img.size) > max_dim:
             scale = max_dim / max(img.size)
@@ -486,7 +486,7 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.6-flash",
                 contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), JSON_PROMPT],
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
