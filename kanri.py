@@ -475,20 +475,23 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
         file_bytes = uploaded_file.read()
         mime_type = "application/pdf"
     else:
-        raw_img = Image.open(uploaded_file)
-        img = ImageOps.exif_transpose(raw_img)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-            
-        max_dim = 1600
-        if max(img.size) > max_dim:
-            scale = max_dim / max(img.size)
-            new_size = (int(img.width * scale), int(img.height * scale))
-            img = img.resize(new_size, Image.Resampling.LANCZOS)
+        # 画像を開いて処理後、確実にメモリから破棄する (OOMクラッシュ・再起動防止)
+        with Image.open(uploaded_file) as raw_img:
+            img = ImageOps.exif_transpose(raw_img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+                
+            max_dim = 1600
+            if max(img.size) > max_dim:
+                scale = max_dim / max(img.size)
+                new_size = (int(img.width * scale), int(img.height * scale))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
 
-        buffered = io.BytesIO()
-        img.save(buffered, format="JPEG", quality=80, optimize=True)
-        file_bytes = buffered.getvalue()
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG", quality=80, optimize=True)
+            file_bytes = buffered.getvalue()
+            buffered.close()
+            del img
         mime_type = "image/jpeg"
 
     for attempt in range(max_retries):
