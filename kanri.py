@@ -611,6 +611,22 @@ def parse_with_tesseract(uploaded_file):
 # ==========================================
 # 4. Streamlit UI
 # ==========================================
+@st.dialog("⚠️ 削除の確認")
+def confirm_delete_dialog(receipt_id, store_name, total_amount):
+    st.warning(f"ID {receipt_id}：【{store_name}】 ¥{total_amount:,} のデータを本当に削除しますか？")
+    st.caption("※削除するとクラウドDBから完全に消去され、元に戻すことはできません。")
+    
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("🗑️ 完全に削除する", type="primary", use_container_width=True):
+            if delete_receipt(receipt_id):
+                st.success("削除が完了しました。")
+                time.sleep(0.5)
+                st.rerun()
+    with col_no:
+        if st.button("キャンセル", type="secondary", use_container_width=True):
+            st.rerun()
+
 def main():
     setup_database()
     st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
@@ -976,17 +992,27 @@ def main():
                                 iprice = st.number_input(f"金額 {idx+1}", value=int(it_price), step=1, key=f"e_iprice_{r_id}_{idx}")
                             edited_items.append((iname, iprice))
 
+                        st.write("---")
                         col_btn1, col_btn2 = st.columns([1, 1])
                         with col_btn1:
-                            submit_edit = st.form_submit_button("💾 変更を保存する", type="primary")
-                        
+                            submit_edit = st.form_submit_button("💾 変更を保存する", type="primary", use_container_width=True)
+                        with col_btn2:
+                            # フォーム内からは「削除確認へ」のトリガーボタンとして動作
+                            submit_delete_trigger = st.form_submit_button("🗑️ このレシートを削除...", type="secondary", use_container_width=True)
+
+                        # 保存ボタンが押されたとき
                         if submit_edit:
                             update_full_receipt(
                                 r_id, edit_date, edit_store, edit_amt, edit_disc, edit_pts,
                                 edit_cat, edit_tax_type, edit_t8_tax, edit_t10_tax, edited_items
                             )
                             st.success(f"ID {r_id} のデータを更新しました！")
+                            time.sleep(0.5)
                             st.rerun()
+
+                    # フォームの外（インデントを1段戻す）で削除トリガーを検知し、ポップアップを開く
+                    if submit_delete_trigger:
+                        confirm_delete_dialog(r_id, rec.get("store_name", "店舗"), rec.get("amount", 0))
 
                     if st.button(f"🗑️ ID {r_id} のレシートを完全削除", key=f"btn_del_rec_{r_id}"):
                         delete_receipt(r_id)
