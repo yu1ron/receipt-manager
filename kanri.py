@@ -67,9 +67,9 @@ Output JSON schema:
 {{
     "store_name": "店舗名またはECサイト名 (例: Amazon.co.jp, TRIAL, セブン-イレブン など)",
     "date": "YYYY/MM/DD",
-    "total_amount": 0 (最終支払合計金額・税込・整数),
-    "discount": 0 (値引き・割引合計額、なければ0・整数),
-    "points_used": 0 (利用ポイント数、なければ0・整数),
+    "total_amount": 0,
+    "discount": 0,
+    "points_used": 0,
     "category": "以下の候補から最も適切なものを1つ選択",
     "tax_info": {{
         "tax_type": "外税" | "内税",
@@ -231,52 +231,54 @@ def save_receipt_with_items(date, store_name, total_amount, discount, points_use
     """レシートと明細を保存 (Supabase優先)"""
     sp = get_supabase_client()
     if sp:
-        # Supabase へ登録
-        res = sp.table("receipts").insert({
-            "date": str(date),
-            "store_name": str(store_name),
-            "total_amount": int(total_amount),
-            "discount": int(discount),
-            "points_used": int(points_used),
-            "category": str(category),
-            "tax_8_amount": int(tax_data.get("tax_8_amount", 0)),
-            "tax_8_tax": int(tax_data.get("tax_8_tax", 0)),
-            "tax_10_amount": int(tax_data.get("tax_10_amount", 0)),
-            "tax_10_tax": int(tax_data.get("tax_10_tax", 0)),
-            "tax_type": str(tax_data.get("tax_type", "外税"))
-        }).execute()
-        
-        if res.data:
-            receipt_id = res.data[0]["id"]
-            items_to_insert = []
-            for item in items:
-                name = item.get("name", "").strip() if isinstance(item, dict) else item[0].strip()
-                price = item.get("price", 0) if isinstance(item, dict) else item[1]
-                if name:
-                    items_to_insert.append({
-                        "receipt_id": receipt_id,
-                        "item_name": name,
-                        "item_price": int(price)
-                    })
-            if items_to_insert:
-                sp.table("receipt_items").insert(items_to_insert).execute()
-            return receipt_id
+        try:
+            res = sp.table("receipts").insert({
+                "date": str(date),
+                "store_name": str(store_name),
+                "total_amount": int(total_amount),
+                "discount": int(discount),
+                "points_used": int(points_used),
+                "category": str(category),
+                "tax_8_amount": int(tax_data.get("tax_8_amount", 0)),
+                "tax_8_tax": int(tax_data.get("tax_8_tax", 0)),
+                "tax_10_amount": int(tax_data.get("tax_10_amount", 0)),
+                "tax_10_tax": int(tax_data.get("tax_10_tax", 0)),
+                "tax_type": str(tax_data.get("tax_type", "外税"))
+            }).execute()
+            
+            if res.data:
+                receipt_id = res.data[0]["id"]
+                items_to_insert = []
+                for item in items:
+                    name = item.get("name", "").strip() if isinstance(item, dict) else item[0].strip()
+                    price = item.get("price", 0) if isinstance(item, dict) else item[1]
+                    if name:
+                        items_to_insert.append({
+                            "receipt_id": receipt_id,
+                            "item_name": name,
+                            "item_price": int(price)
+                        })
+                if items_to_insert:
+                    sp.table("receipt_items").insert(items_to_insert).execute()
+                return receipt_id
+        except Exception as e:
+            st.error(f"Supabase登録エラー: {e}")
 
     # SQLite フォールバック
     conn = sqlite3.connect("receipt_data.db")
     cursor = conn.cursor()
     cursor.execute(
         """INSERT INTO receipts 
-           (date, store_name, total_amount, discount, points_used, category, 
-            tax_8_amount, tax_8_tax, tax_10_amount, tax_10_tax, tax_type) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (date, store_name, total_amount, discount, points_used, category, 
+             tax_8_amount, tax_8_tax, tax_10_amount, tax_10_tax, tax_type) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            date, store_name, total_amount, discount, points_used, category,
-            tax_data.get("tax_8_amount", 0),
-            tax_data.get("tax_8_tax", 0),
-            tax_data.get("tax_10_amount", 0),
-            tax_data.get("tax_10_tax", 0),
-            tax_data.get("tax_type", "外税")
+            str(date), str(store_name), int(total_amount), int(discount), int(points_used), str(category),
+            int(tax_data.get("tax_8_amount", 0)),
+            int(tax_data.get("tax_8_tax", 0)),
+            int(tax_data.get("tax_10_amount", 0)),
+            int(tax_data.get("tax_10_tax", 0)),
+            str(tax_data.get("tax_type", "外税"))
         )
     )
     receipt_id = cursor.lastrowid
@@ -284,7 +286,7 @@ def save_receipt_with_items(date, store_name, total_amount, discount, points_use
         name = item.get("name", "").strip() if isinstance(item, dict) else item[0].strip()
         price = item.get("price", 0) if isinstance(item, dict) else item[1]
         if name:
-            cursor.execute("INSERT INTO receipt_items (receipt_id, item_name, item_price) VALUES (?, ?, ?)", (receipt_id, name, price))
+            cursor.execute("INSERT INTO receipt_items (receipt_id, item_name, item_price) VALUES (?, ?, ?)", (receipt_id, name, int(price)))
     conn.commit()
     conn.close()
     return receipt_id
@@ -307,8 +309,13 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
             res = query.order("id", desc=True).execute()
             receipts = res.data or []
             
-            # 各レシートの明細を取得
             for r in receipts:
+                # amount 列名の安全互換
+                if "total_amount" in r and "amount" not in r:
+                    r["amount"] = r["total_amount"]
+                elif "amount" in r and "total_amount" not in r:
+                    r["total_amount"] = r["amount"]
+
                 items_res = sp.table("receipt_items").select("item_name, item_price").eq("receipt_id", r["id"]).execute()
                 r["items"] = [(it["item_name"], it["item_price"]) for it in (items_res.data or [])]
             return receipts
@@ -319,11 +326,11 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
     # SQLite フォールバック
     conn = sqlite3.connect("receipt_data.db")
     cursor = conn.cursor()
-    sql = "SELECT id, date, store_name, amount, discount, point_usage, category, tax_type, target_8_tax, target_10_tax, memo FROM receipts WHERE 1=1"
+    sql = "SELECT id, date, store_name, total_amount, discount, points_used, category, tax_type, tax_8_amount, tax_8_tax, tax_10_amount, tax_10_tax FROM receipts WHERE 1=1"
     params = []
     if search_kw:
-        sql += " AND store_name LIKE ?"
-        params.append(f"%{search_kw}%")
+        sql += " AND (store_name LIKE ? OR category LIKE ? OR date LIKE ?)"
+        params.extend([f"%{search_kw}%", f"%{search_kw}%", f"%{search_kw}%"])
     if start_date:
         sql += " AND date >= ?"
         params.append(str(start_date))
@@ -343,10 +350,12 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
         cursor.execute("SELECT item_name, item_price FROM receipt_items WHERE receipt_id = ?", (r_id,))
         items = cursor.fetchall()
         receipts.append({
-            "id": r_id, "date": row[1], "store_name": row[2], "amount": row[3],
-            "discount": row[4], "point_usage": row[5], "category": row[6],
-            "tax_type": row[7], "target_8_tax": row[8], "target_10_tax": row[9],
-            "memo": row[10], "items": items
+            "id": r_id, "date": row[1], "store_name": row[2],
+            "total_amount": row[3], "amount": row[3],
+            "discount": row[4], "points_used": row[5], "category": row[6],
+            "tax_type": row[7], "tax_8_amount": row[8], "tax_8_tax": row[9],
+            "tax_10_amount": row[10], "tax_10_tax": row[11],
+            "items": items
         })
     conn.close()
     return receipts
@@ -357,14 +366,16 @@ def get_monthly_summary():
     if not all_data:
         return []
     df = pd.DataFrame(all_data)
-    df["month"] = df["date"].str.slice(0, 7)
+    if "amount" not in df.columns and "total_amount" in df.columns:
+        df["amount"] = df["total_amount"]
+    df["month"] = df["date"].astype(str).str.slice(0, 7)
     grouped = df.groupby("month").agg({
         "amount": "sum",
         "tax_8_tax": "sum",
         "tax_10_tax": "sum"
     }).reset_index().sort_values("month", ascending=False)
     
-    return [(row["month"], row["amount"], row["tax_8_tax"], row["tax_10_tax"]) for _, row in grouped.iterrows()]
+    return [(row["month"], int(row["amount"]), int(row.get("tax_8_tax", 0)), int(row.get("tax_10_tax", 0))) for _, row in grouped.iterrows()]
 
 def get_category_summary(month=None):
     """カテゴリー別集計"""
@@ -372,33 +383,39 @@ def get_category_summary(month=None):
     if not all_data:
         return []
     df = pd.DataFrame(all_data)
+    if "amount" not in df.columns and "total_amount" in df.columns:
+        df["amount"] = df["total_amount"]
     if month:
-        df = df[df["date"].str.slice(0, 7) == month]
+        df = df[df["date"].astype(str).str.slice(0, 7) == month]
     if df.empty:
         return []
     grouped = df.groupby("category")["amount"].sum().reset_index().sort_values("amount", ascending=False)
-    return [(row["category"], row["amount"]) for _, row in grouped.iterrows()]
+    return [(row["category"], int(row["amount"])) for _, row in grouped.iterrows()]
 
 def update_full_receipt(receipt_id, date, store_name, total_amount, discount, points_used, category, tax_type, t8_tax, t10_tax, items):
     """レシート更新"""
     sp = get_supabase_client()
     if sp:
-        sp.table("receipts").update({
-            "date": str(date), "store_name": str(store_name), "total_amount": int(total_amount),
-            "discount": int(discount), "points_used": int(points_used), "category": str(category),
-            "tax_type": str(tax_type), "tax_8_tax": int(t8_tax), "tax_10_tax": int(t10_tax)
-        }).eq("id", receipt_id).execute()
-        
-        sp.table("receipt_items").delete().eq("receipt_id", receipt_id).execute()
-        items_to_insert = []
-        for item in items:
-            name = item.get("name", "").strip() if isinstance(item, dict) else item[0].strip()
-            price = item.get("price", 0) if isinstance(item, dict) else item[1]
-            if name:
-                items_to_insert.append({"receipt_id": receipt_id, "item_name": name, "item_price": int(price)})
-        if items_to_insert:
-            sp.table("receipt_items").insert(items_to_insert).execute()
-        return
+        try:
+            sp.table("receipts").update({
+                "date": str(date), "store_name": str(store_name), "total_amount": int(total_amount),
+                "discount": int(discount), "points_used": int(points_used), "category": str(category),
+                "tax_type": str(tax_type), "tax_8_tax": int(t8_tax), "tax_10_tax": int(t10_tax)
+            }).eq("id", receipt_id).execute()
+            
+            sp.table("receipt_items").delete().eq("receipt_id", receipt_id).execute()
+            items_to_insert = []
+            for item in items:
+                name = item[0].strip() if isinstance(item, (list, tuple)) else item.get("name", "").strip()
+                price = item[1] if isinstance(item, (list, tuple)) else item.get("price", 0)
+                if name:
+                    items_to_insert.append({"receipt_id": receipt_id, "item_name": name, "item_price": int(price)})
+            if items_to_insert:
+                sp.table("receipt_items").insert(items_to_insert).execute()
+            return True
+        except Exception as e:
+            st.error(f"Supabase更新エラー: {e}")
+            return False
 
     conn = sqlite3.connect("receipt_data.db")
     cursor = conn.cursor()
@@ -407,15 +424,16 @@ def update_full_receipt(receipt_id, date, store_name, total_amount, discount, po
         SET date = ?, store_name = ?, total_amount = ?, discount = ?, points_used = ?,
             category = ?, tax_type = ?, tax_8_tax = ?, tax_10_tax = ?
         WHERE id = ?
-    """, (date, store_name, total_amount, discount, points_used, category, tax_type, t8_tax, t10_tax, receipt_id))
+    """, (str(date), str(store_name), int(total_amount), int(discount), int(points_used), str(category), str(tax_type), int(t8_tax), int(t10_tax), receipt_id))
     cursor.execute("DELETE FROM receipt_items WHERE receipt_id = ?", (receipt_id,))
     for item in items:
-        name = item.get("name", "").strip() if isinstance(item, dict) else item[0].strip()
-        price = item.get("price", 0) if isinstance(item, dict) else item[1]
+        name = item[0].strip() if isinstance(item, (list, tuple)) else item.get("name", "").strip()
+        price = item[1] if isinstance(item, (list, tuple)) else item.get("price", 0)
         if name:
-            cursor.execute("INSERT INTO receipt_items (receipt_id, item_name, item_price) VALUES (?, ?, ?)", (receipt_id, name, price))
+            cursor.execute("INSERT INTO receipt_items (receipt_id, item_name, item_price) VALUES (?, ?, ?)", (receipt_id, name, int(price)))
     conn.commit()
     conn.close()
+    return True
 
 def delete_receipt(receipt_id):
     """レシートおよび紐づく明細を完全削除 (Supabase / SQLite 両対応)"""
@@ -423,16 +441,13 @@ def delete_receipt(receipt_id):
     sp = get_supabase_client()
     if sp:
         try:
-            # 紐づく明細を削除
             sp.table("receipt_items").delete().eq("receipt_id", r_id).execute()
-            # レシート本体を削除
             sp.table("receipts").delete().eq("id", r_id).execute()
             return True
         except Exception as e:
             st.error(f"Supabase削除エラー: {e}")
             return False
 
-    # SQLite フォールバック
     conn = sqlite3.connect("receipt_data.db")
     cursor = conn.cursor()
     cursor.execute("DELETE FROM receipt_items WHERE receipt_id = ?", (r_id,))
@@ -464,7 +479,6 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
         if img.mode != "RGB":
             img = img.convert("RGB")
             
-        # スマホ写真の自動リサイズ＆圧縮（高速化）
         max_dim = 1600
         if max(img.size) > max_dim:
             scale = max_dim / max(img.size)
@@ -622,7 +636,6 @@ def confirm_delete_dialog(receipt_id, store_name, total_amount):
 
 def main():
     setup_database()
-    st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
     st.title("🧾 家計簿レシート管理アプリ")
 
     sp_client = get_supabase_client()
@@ -631,7 +644,6 @@ def main():
     with st.sidebar:
         st.header("⚙️ 設定 / 解析エンジン")
         
-        # データベース接続状況のステータス表示
         if sp_client:
             st.success("☁️ Supabase クラウドDB 接続中")
         else:
@@ -679,7 +691,6 @@ def main():
                     st.rerun()
             openai_api_key = st.session_state.get("openai_key", default_openai_key)
 
-        # Supabaseキー設定アコーディオン
         with st.expander("☁️ Supabase 接続設定"):
             default_sp_url = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", ""))
             default_sp_key = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY", ""))
@@ -797,7 +808,7 @@ def main():
                 st.write("---")
                 col_save_all, col_clear = st.columns([1, 1])
                 with col_save_all:
-                    if st.button("💾 全てのレシートを一括保存する", type="primary"):
+                    if st.button("💾 全てのレシートを一括保存する", type="primary", use_container_width=True):
                         for r_item in all_forms_data:
                             save_receipt_with_items(
                                 r_item["date"], r_item["store_name"], r_item["total_amount"],
@@ -807,10 +818,11 @@ def main():
                         st.success(f"{len(all_forms_data)} 件のレシートを保存しました！")
                         st.session_state["uploader_key"] += 1
                         st.session_state["batch_parsed_data"] = {}
+                        time.sleep(0.8)
                         st.rerun()
 
                 with col_clear:
-                    if st.button("❌ キャンセル（クリア）"):
+                    if st.button("❌ キャンセル（クリア）", use_container_width=True):
                         st.session_state["uploader_key"] += 1
                         st.session_state["batch_parsed_data"] = {}
                         st.rerun()
@@ -921,87 +933,82 @@ def main():
     # --- タブ3: 履歴検索・編集・削除 ---
     with tab3:
         st.subheader("🔍 データ履歴の検索・編集・削除")
-        # 検索条件の入力欄（例: 3列または4列のカラム内）
-        sort_order = st.selectbox(
-            "並び順",
-            options=["登録が新しい順", "登録が古い順", "レシート日付が新しい順", "レシート日付が古い順", "金額が高い順", "金額が安い順"],
-            index=0
-        )
-        search_kw = st.text_input("🔍 キーワード検索 (店舗名、品名、カテゴリー、日付)", placeholder="例: Amazon, シャンプー, 食費, 2026/08")
-        records = get_all_receipts(search_kw, sort_order=sort_order)
+        
+        c_filter1, c_filter2, c_filter3 = st.columns([3, 2, 2])
+        with c_filter1:
+            search_kw = st.text_input("🔍 キーワード検索 (店舗名、カテゴリー、日付)", placeholder="例: Amazon, 食費, 2026/08")
+        with c_filter2:
+            cat_filter = st.selectbox("カテゴリー絞り込み", ["すべて"] + CATEGORIES, index=0)
+        with c_filter3:
+            sort_order = st.selectbox(
+                "並び順",
+                options=["登録が新しい順", "登録が古い順", "レシート日付が新しい順", "レシート日付が古い順", "金額が高い順", "金額が安い順"],
+                index=0
+            )
 
-        if search_kw.strip():
-            hit_sum = sum(r["amount"] for r in records)
+        records = get_all_receipts(search_kw=search_kw, category=cat_filter)
+
+        if search_kw.strip() and records:
+            hit_sum = sum(int(r.get("total_amount", r.get("amount", 0))) for r in records)
             st.caption(f"検索結果: **{len(records)} 件** 見つかりました（合計支出: **¥{hit_sum:,}**）")
 
-        if records:# --- 並び替え（ソート）処理 ---
+        if records:
+            # --- 並び替え（ソート）処理 ---
             if sort_order == "登録が新しい順":
-                records = sorted(records, key=lambda x: x["id"], reverse=True)
+                records = sorted(records, key=lambda x: int(x["id"]), reverse=True)
             elif sort_order == "登録が古い順":
-                records = sorted(records, key=lambda x: x["id"], reverse=False)
+                records = sorted(records, key=lambda x: int(x["id"]), reverse=False)
             elif sort_order == "レシート日付が新しい順":
-                records = sorted(records, key=lambda x: (str(x["date"]), x["id"]), reverse=True)
+                records = sorted(records, key=lambda x: (str(x["date"]), int(x["id"])), reverse=True)
             elif sort_order == "レシート日付が古い順":
-                records = sorted(records, key=lambda x: (str(x["date"]), x["id"]), reverse=False)
+                records = sorted(records, key=lambda x: (str(x["date"]), int(x["id"])), reverse=False)
             elif sort_order == "金額が高い順":
-                records = sorted(records, key=lambda x: x["amount"], reverse=True)
+                records = sorted(records, key=lambda x: int(x.get("total_amount", x.get("amount", 0))), reverse=True)
             elif sort_order == "金額が安い順":
-                records = sorted(records, key=lambda x: x["amount"], reverse=False)
+                records = sorted(records, key=lambda x: int(x.get("total_amount", x.get("amount", 0))), reverse=False)
+
             for rec in records:
                 r_id = rec["id"]
+                amt_val = int(rec.get("total_amount", rec.get("amount", 0)))
                 store_display = f"【{rec['store_name']}】" if rec['store_name'] else ""
-                disc_display = f" | 値引: -¥{rec['discount']:,}" if rec['discount'] > 0 else ""
-                pts_display = f" | Pt: {rec['points_used']:,}pt" if rec['points_used'] > 0 else ""
+                disc_display = f" | 値引: -¥{rec['discount']:,}" if int(rec.get('discount', 0)) > 0 else ""
+                pts_display = f" | Pt: {rec['points_used']:,}pt" if int(rec.get('points_used', 0)) > 0 else ""
 
-                header_title = f"ID {r_id} | {rec['date']} {store_display} | ¥{rec['amount']:,} ({rec['category']}){disc_display}{pts_display}"
+                header_title = f"ID {r_id} | {rec['date']} {store_display} | ¥{amt_val:,} ({rec.get('category', 'その他')}){disc_display}{pts_display}"
                 
                 with st.expander(header_title):
+                    submit_delete_trigger = False
                     with st.form(key=f"edit_form_{r_id}"):
                         st.write("##### 📌 基本情報の修正")
-                        c1, c2, c3 = st.columns([2, 2, 2])
+                        c1, c2, c3 = st.columns(3)
                         with c1:
-                            search_kw = st.text_input("店舗名で検索", "")
+                            edit_date = st.text_input("利用日付", value=str(rec["date"]), key=f"e_date_{r_id}")
+                            edit_store = st.text_input("店舗名", value=str(rec.get("store_name", "")), key=f"e_store_{r_id}")
                         with c2:
-                            selected_cat = st.selectbox("カテゴリ絞り込み", ["すべて", "食費", "日用品", "外食", "交通費", "医療費", "住居・光熱費", "教養・娯楽", "その他"])
+                            edit_amt = st.number_input("合計金額 (円)", value=amt_val, step=1, key=f"e_amt_{r_id}")
+                            edit_disc = st.number_input("値引き額 (円)", value=int(rec.get("discount", 0)), step=1, key=f"e_disc_{r_id}")
                         with c3:
-                            sort_order = st.selectbox(
-                                "並び順",
-                                ["登録が新しい順", "登録が古い順", "レシート日付が新しい順", "レシート日付が古い順", "金額が高い順", "金額が安い順"]
-                        )
-
-                        # データ取得
-                        records = get_all_receipts(search_kw=search_kw, category=selected_cat)
-
-                        c4, c5, c6 = st.columns([2, 2, 3])
-                        with c4:
-                            edit_disc = st.number_input("値引き額 (円)", value=int(rec["discount"]), step=1, key=f"e_disc_{r_id}")
-                        with c5:
-                            edit_pts = st.number_input("利用ポイント (pt)", value=int(rec["points_used"]), step=1, key=f"e_pts_{r_id}")
-                        with c6:
-                            matched_idx = 0
+                            edit_pts = st.number_input("利用ポイント (pt)", value=int(rec.get("points_used", 0)), step=1, key=f"e_pts_{r_id}")
                             cur_rec_cat = str(rec.get("category", "")).strip()
-                            if cur_rec_cat in CATEGORIES:
-                                matched_idx = CATEGORIES.index(cur_rec_cat)
-                            else:
-                                for i, c in enumerate(CATEGORIES):
-                                    if cur_rec_cat and (cur_rec_cat in c or c.startswith(cur_rec_cat[:2])):
-                                        matched_idx = i
-                                        break
+                            matched_idx = CATEGORIES.index(cur_rec_cat) if cur_rec_cat in CATEGORIES else 0
                             edit_cat = st.selectbox("カテゴリー", CATEGORIES, index=matched_idx, key=f"e_cat_{r_id}")
 
                         st.write("##### 🧾 消費税内訳の修正")
                         t1, t2, t3 = st.columns([2, 2, 2])
                         with t1:
-                            tax_idx = 0 if rec["tax_type"] == "外税" else 1
+                            tax_idx = 0 if rec.get("tax_type") == "外税" else 1
                             edit_tax_type = st.selectbox("税区分", ["外税", "内税"], index=tax_idx, key=f"e_ttype_{r_id}")
                         with t2:
-                            edit_t8_tax = st.number_input("8% 消費税額", value=int(rec["tax_8_tax"]), step=1, key=f"e_t8_{r_id}")
+                            edit_t8_tax = st.number_input("8% 消費税額", value=int(rec.get("tax_8_tax", 0)), step=1, key=f"e_t8_{r_id}")
                         with t3:
-                            edit_t10_tax = st.number_input("10% 消費税額", value=int(rec["tax_10_tax"]), step=1, key=f"e_t10_{r_id}")
+                            edit_t10_tax = st.number_input("10% 消費税額", value=int(rec.get("tax_10_tax", 0)), step=1, key=f"e_t10_{r_id}")
 
                         st.write("##### 🛒 商品明細の修正")
                         edited_items = []
-                        for idx, (it_name, it_price) in enumerate(rec["items"]):
+                        for idx, item in enumerate(rec.get("items", [])):
+                            it_name = item[0] if isinstance(item, (list, tuple)) else item.get("name", item.get("item_name", ""))
+                            it_price = item[1] if isinstance(item, (list, tuple)) else item.get("price", item.get("item_price", 0))
+                            
                             ic1, ic2 = st.columns([4, 2])
                             with ic1:
                                 iname = st.text_input(f"商品名 {idx+1}", value=it_name, key=f"e_iname_{r_id}_{idx}")
@@ -1014,10 +1021,8 @@ def main():
                         with col_btn1:
                             submit_edit = st.form_submit_button("💾 変更を保存する", type="primary", use_container_width=True)
                         with col_btn2:
-                            # フォーム内からは「削除確認へ」のトリガーボタンとして動作
                             submit_delete_trigger = st.form_submit_button("🗑️ このレシートを削除...", type="secondary", use_container_width=True)
 
-                        # 保存ボタンが押されたとき
                         if submit_edit:
                             update_full_receipt(
                                 r_id, edit_date, edit_store, edit_amt, edit_disc, edit_pts,
@@ -1027,14 +1032,9 @@ def main():
                             time.sleep(0.5)
                             st.rerun()
 
-                    # フォームの外（インデントを1段戻す）で削除トリガーを検知し、ポップアップを開く
+                    # フォーム外で削除モーダルを呼び出す
                     if submit_delete_trigger:
-                        confirm_delete_dialog(r_id, rec.get("store_name", "店舗"), rec.get("amount", 0))
-
-                    if st.button(f"🗑️ ID {r_id} のレシートを完全削除", key=f"btn_del_rec_{r_id}"):
-                        delete_receipt(r_id)
-                        st.warning(f"ID {r_id} のデータを削除しました。")
-                        st.rerun()
+                        confirm_delete_dialog(r_id, rec.get("store_name", "店舗"), amt_val)
         else:
             st.info("該当するデータが見つかりませんでした。")
 
