@@ -470,15 +470,23 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
         img = ImageOps.exif_transpose(raw_img)
         if img.mode != "RGB":
             img = img.convert("RGB")
+            
+        # --- 高速化: スマホ写真の自動リサイズ＆圧縮 ---
+        max_dim = 1600
+        if max(img.size) > max_dim:
+            scale = max_dim / max(img.size)
+            new_size = (int(img.width * scale), int(img.height * scale))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+
         buffered = io.BytesIO()
-        img.save(buffered, format="JPEG")
+        img.save(buffered, format="JPEG", quality=80, optimize=True)
         file_bytes = buffered.getvalue()
         mime_type = "image/jpeg"
 
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model="gemini-3.6-flash",
+                model="gemini-2.5-flash",
                 contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), JSON_PROMPT],
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
@@ -491,7 +499,7 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
             return parsed_data[0] if isinstance(parsed_data, list) and len(parsed_data) > 0 else parsed_data
         except Exception as e:
             if ("503" in str(e) or "UNAVAILABLE" in str(e) or "429" in str(e)) and attempt < max_retries - 1:
-                time.sleep((attempt + 1) * 3)
+                time.sleep((attempt + 1) * 2)
                 continue
             raise e
 
