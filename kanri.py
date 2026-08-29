@@ -292,11 +292,12 @@ def save_receipt_with_items(date, store_name, total_amount, discount, points_use
     return receipt_id
 
 def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None):
-    """レシート一覧と紐づく明細を取得"""
+    """レシート一覧と紐づく明細を一括取得（高速化版）"""
     sp = get_supabase_client()
     if sp:
         try:
-            query = sp.table("receipts").select("*")
+            # 1回のリクエストで本体と明細(receipt_items)を一括JOIN取得
+            query = sp.table("receipts").select("*, receipt_items(*)")
             if search_kw:
                 query = query.ilike("store_name", f"%{search_kw}%")
             if start_date:
@@ -310,14 +311,14 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
             receipts = res.data or []
             
             for r in receipts:
-                # amount 列名の安全互換
                 if "total_amount" in r and "amount" not in r:
                     r["amount"] = r["total_amount"]
                 elif "amount" in r and "total_amount" not in r:
                     r["total_amount"] = r["amount"]
 
-                items_res = sp.table("receipt_items").select("item_name, item_price").eq("receipt_id", r["id"]).execute()
-                r["items"] = [(it["item_name"], it["item_price"]) for it in (items_res.data or [])]
+                # 一括取得した receipt_items を整形
+                raw_items = r.get("receipt_items", [])
+                r["items"] = [(it.get("item_name", ""), it.get("item_price", 0)) for it in raw_items]
             return receipts
         except Exception as e:
             st.error(f"Supabase取得エラー: {e}")
