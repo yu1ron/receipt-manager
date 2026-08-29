@@ -289,74 +289,67 @@ def save_receipt_with_items(date, store_name, total_amount, discount, points_use
     conn.close()
     return receipt_id
 
-def get_all_receipts(search_keyword=""):
-    """全レシートと明細の取得（検索対応）"""
+def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None):
+    """レシート一覧と紐づく明細を取得"""
     sp = get_supabase_client()
     if sp:
-        # Supabase から取得
-        query = sp.table("receipts").select("*, receipt_items(*)").order("date", desc=True)
-        res = query.execute()
-        rows = res.data or []
-        
-        data = []
-        kw = search_keyword.strip().lower()
-        for r in rows:
-            r_items = [(it["item_name"], it["item_price"]) for it in r.get("receipt_items", [])]
-            # 検索フィルタ
-            if kw:
-                match_text = f"{r.get('store_name','')} {r.get('category','')} {r.get('date','')} " + " ".join([it[0] for it in r_items])
-                if kw not in match_text.lower():
-                    continue
-                    
-            data.append({
-                "id": r["id"],
-                "date": r.get("date", ""),
-                "store_name": r.get("store_name", ""),
-                "amount": r.get("total_amount", 0),
-                "discount": r.get("discount", 0),
-                "points_used": r.get("points_used", 0),
-                "category": r.get("category", "その他"),
-                "tax_8_amount": r.get("tax_8_amount", 0),
-                "tax_8_tax": r.get("tax_8_tax", 0),
-                "tax_10_amount": r.get("tax_10_amount", 0),
-                "tax_10_tax": r.get("tax_10_tax", 0),
-                "tax_type": r.get("tax_type", "外税"),
-                "items": r_items
-            })
-        return data
+        try:
+            query = sp.table("receipts").select("*")
+            if search_kw:
+                query = query.ilike("store_name", f"%{search_kw}%")
+            if start_date:
+                query = query.gte("date", str(start_date))
+            if end_date:
+                query = query.lte("date", str(end_date))
+            if category and category != "すべて":
+                query = query.eq("category", category)
+            
+            res = query.order("id", desc=True).execute()
+            receipts = res.data or []
+            
+            # 各レシートの明細を取得
+            for r in receipts:
+                items_res = sp.table("receipt_items").select("item_name, item_price").eq("receipt_id", r["id"]).execute()
+                r["items"] = [(it["item_name"], it["item_price"]) for it in (items_res.data or [])]
+            return receipts
+        except Exception as e:
+            st.error(f"Supabase取得エラー: {e}")
+            return []
 
     # SQLite フォールバック
     conn = sqlite3.connect("receipt_data.db")
     cursor = conn.cursor()
-    if search_keyword.strip():
-        kw = f"%{search_keyword.strip()}%"
-        cursor.execute("""
-            SELECT DISTINCT r.id, r.date, r.store_name, r.total_amount, r.discount, r.points_used, r.category, 
-                            r.tax_8_amount, r.tax_8_tax, r.tax_10_amount, r.tax_10_tax, r.tax_type 
-            FROM receipts r
-            LEFT JOIN receipt_items i ON r.id = i.receipt_id
-            WHERE r.store_name LIKE ? OR r.category LIKE ? OR r.date LIKE ? OR i.item_name LIKE ?
-            ORDER BY r.date DESC
-        """, (kw, kw, kw, kw))
-    else:
-        cursor.execute("""
-            SELECT id, date, store_name, total_amount, discount, points_used, category, 
-                   tax_8_amount, tax_8_tax, tax_10_amount, tax_10_tax, tax_type 
-            FROM receipts ORDER BY date DESC
-        """)
-    receipts = cursor.fetchall()
-    data = []
-    for r in receipts:
-        r_id, r_date, r_store, r_amount, r_disc, r_pts, r_cat, t8_a, t8_t, t10_a, t10_t, t_type = r
+    sql = "SELECT id, date, store_name, amount, discount, point_usage, category, tax_type, target_8_tax, target_10_tax, memo FROM receipts WHERE 1=1"
+    params = []
+    if search_kw:
+        sql += " AND store_name LIKE ?"
+        params.append(f"%{search_kw}%")
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(str(start_date))
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(str(end_date))
+    if category and category != "すべて":
+        sql += " AND category = ?"
+        params.append(category)
+    sql += " ORDER BY id DESC"
+    cursor.execute(sql, params)
+    rows = cursor.fetchall()
+    
+    receipts = []
+    for row in rows:
+        r_id = row[0]
         cursor.execute("SELECT item_name, item_price FROM receipt_items WHERE receipt_id = ?", (r_id,))
         items = cursor.fetchall()
-        data.append({
-            "id": r_id, "date": r_date, "store_name": r_store, "amount": r_amount, "discount": r_disc,
-            "points_used": r_pts, "category": r_cat, "tax_8_amount": t8_a, "tax_8_tax": t8_t,
-            "tax_10_amount": t10_a, "tax_10_tax": t10_t, "tax_type": t_type, "items": items
+        receipts.append({
+            "id": r_id, "date": row[1], "store_name": row[2], "amount": row[3],
+            "discount": row[4], "point_usage": row[5], "category": row[6],
+            "tax_type": row[7], "target_8_tax": row[8], "target_10_tax": row[9],
+            "memo": row[10], "items": items
         })
     conn.close()
-    return data
+    return receipts
 
 def get_monthly_summary():
     """月別集計"""
@@ -965,13 +958,19 @@ def main():
                 with st.expander(header_title):
                     with st.form(key=f"edit_form_{r_id}"):
                         st.write("##### 📌 基本情報の修正")
-                        c1, c2, c3 = st.columns([3, 2, 2])
+                        c1, c2, c3 = st.columns([2, 2, 2])
                         with c1:
-                            edit_store = st.text_input("店舗名", value=rec["store_name"], key=f"e_store_{r_id}")
+                            search_kw = st.text_input("店舗名で検索", "")
                         with c2:
-                            edit_date = st.text_input("利用日付", value=rec["date"], key=f"e_date_{r_id}")
+                            selected_cat = st.selectbox("カテゴリ絞り込み", ["すべて", "食費", "日用品", "外食", "交通費", "医療費", "住居・光熱費", "教養・娯楽", "その他"])
                         with c3:
-                            edit_amt = st.number_input("合計金額 (円)", value=int(rec["amount"]), step=1, key=f"e_amt_{r_id}")
+                            sort_order = st.selectbox(
+                                "並び順",
+                                ["登録が新しい順", "登録が古い順", "レシート日付が新しい順", "レシート日付が古い順", "金額が高い順", "金額が安い順"]
+                        )
+
+                        # データ取得
+                        records = get_all_receipts(search_kw=search_kw, category=selected_cat)
 
                         c4, c5, c6 = st.columns([2, 2, 3])
                         with c4:
