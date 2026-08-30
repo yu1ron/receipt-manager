@@ -892,11 +892,14 @@ def main():
                     df_cat = pd.DataFrame(cat_data, columns=["カテゴリー", "金額"])
                     total_cat_amt = df_cat["金額"].sum()
 
+                    # スマホ対応: ドーナツグラフの最適化
                     fig_donut = go.Figure(data=[go.Pie(
                         labels=df_cat["カテゴリー"],
                         values=df_cat["金額"],
-                        hole=0.62,
-                        textinfo="label+percent",
+                        hole=0.60,
+                        textinfo="percent",              # 円グラフ内には%のみ表示で見切れ防止
+                        textposition="inside",           # 必ず円の内側に収める
+                        insidetextorientation="horizontal",
                         hoverinfo="label+value+percent",
                         hovertemplate="<b>%{label}</b><br>金額: ¥%{value:,.0f}<br>割合: %{percent}<extra></extra>",
                         marker=dict(colors=px.colors.qualitative.Pastel)
@@ -904,17 +907,24 @@ def main():
 
                     fig_donut.update_layout(
                         annotations=[dict(
-                            text=f"合計<br><b>¥{total_cat_amt:,}</b>",
+                            text=f"<span style='font-size:12px;color:#888;'>合計</span><br><b style='font-size:16px;'>¥{total_cat_amt:,}</b>",
                             x=0.5, y=0.5,
-                            font_size=15,
                             showarrow=False
                         )],
-                        showlegend=False,
-                        margin=dict(l=10, r=10, t=10, b=10),
-                        height=360,
+                        showlegend=True,                 # 凡例を表示してカテゴリーを判別
+                        legend=dict(
+                            orientation="h",             # 横並びでスマホ下に配置
+                            yanchor="top",
+                            y=-0.1,
+                            xanchor="center",
+                            x=0.5,
+                            font=dict(size=11)
+                        ),
+                        margin=dict(l=10, r=10, t=10, b=40), # 凡例分の下余白を確保
+                        height=380,
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
-                        font=dict(family="sans-serif", size=12)
+                        font=dict(family="sans-serif")
                     )
                     st.plotly_chart(fig_donut, use_container_width=True)
                 else:
