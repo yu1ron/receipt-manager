@@ -1010,9 +1010,13 @@ def main():
                 st.plotly_chart(fig_bar, use_container_width=True)
 
             with col_chart_right:
-                st.markdown("#### 🍩 カテゴリー別内訳")
-                available_months = ["全期間"] + [row[0] for row in summary_data]
-                selected_month = st.selectbox("表示月を選択", available_months, index=0, key="donut_month_select")
+                st.markdown("#### 📊 カテゴリー別内訳")
+                c_sel1, c_sel2 = st.columns(2)
+                with c_sel1:
+                    available_months = ["全期間"] + [row[0] for row in summary_data]
+                    selected_month = st.selectbox("表示月を選択", available_months, index=0, key="cat_month_select")
+                with c_sel2:
+                    chart_style = st.selectbox("形式を選択", ["ドーナツ", "横棒グラフ", "ツリーマップ"], index=0, key="cat_chart_type")
 
                 target_m = None if selected_month == "全期間" else selected_month
                 cat_data = get_category_summary(target_m)
@@ -1021,40 +1025,89 @@ def main():
                     df_cat = pd.DataFrame(cat_data, columns=["カテゴリー", "金額"])
                     total_cat_amt = df_cat["金額"].sum()
 
-                    fig_donut = go.Figure(data=[go.Pie(
-                        labels=df_cat["カテゴリー"],
-                        values=df_cat["金額"],
-                        hole=0.60,
-                        textinfo="percent",
-                        textposition="inside",
-                        insidetextorientation="horizontal",
-                        hoverinfo="label+value+percent",
-                        hovertemplate="<b>%{label}</b><br>金額: ¥%{value:,.0f}<br>割合: %{percent}<extra></extra>",
-                        marker=dict(colors=px.colors.qualitative.Pastel)
-                    )])
+                    if chart_style == "ドーナツ":
+                        fig_donut = go.Figure(data=[go.Pie(
+                            labels=df_cat["カテゴリー"],
+                            values=df_cat["金額"],
+                            hole=0.60,
+                            textinfo="percent",
+                            textposition="inside",
+                            insidetextorientation="horizontal",
+                            hoverinfo="label+value+percent",
+                            hovertemplate="<b>%{label}</b><br>金額: ¥%{value:,.0f}<br>割合: %{percent}<extra></extra>",
+                            marker=dict(colors=px.colors.qualitative.Pastel)
+                        )])
+                        fig_donut.update_layout(
+                            annotations=[dict(
+                                text=f"<span style='font-size:12px;color:#888;'>合計</span><br><b style='font-size:16px;'>¥{total_cat_amt:,}</b>",
+                                x=0.5, y=0.5,
+                                showarrow=False
+                            )],
+                            showlegend=True,
+                            legend=dict(
+                                orientation="h",
+                                yanchor="top",
+                                y=-0.1,
+                                xanchor="center",
+                                x=0.5,
+                                font=dict(size=11)
+                            ),
+                            margin=dict(l=10, r=10, t=10, b=40),
+                            height=380,
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(family="sans-serif")
+                        )
+                        st.plotly_chart(fig_donut, use_container_width=True)
 
-                    fig_donut.update_layout(
-                        annotations=[dict(
-                            text=f"<span style='font-size:12px;color:#888;'>合計</span><br><b style='font-size:16px;'>¥{total_cat_amt:,}</b>",
-                            x=0.5, y=0.5,
-                            showarrow=False
-                        )],
-                        showlegend=True,
-                        legend=dict(
+                    elif chart_style == "横棒グラフ":
+                        df_bar = df_cat.sort_values("金額", ascending=True)
+                        fig_hbar = px.bar(
+                            df_bar,
+                            x="金額",
+                            y="カテゴリー",
                             orientation="h",
-                            yanchor="top",
-                            y=-0.1,
-                            xanchor="center",
-                            x=0.5,
-                            font=dict(size=11)
-                        ),
-                        margin=dict(l=10, r=10, t=10, b=40),
-                        height=380,
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        font=dict(family="sans-serif")
-                    )
-                    st.plotly_chart(fig_donut, use_container_width=True)
+                            text="金額",
+                            color="金額",
+                            color_continuous_scale="Purp"
+                        )
+                        fig_hbar.update_traces(
+                            texttemplate='¥%{text:,.0f}',
+                            textposition='outside',
+                            marker_line_width=0,
+                            opacity=0.85
+                        )
+                        fig_hbar.update_layout(
+                            margin=dict(l=10, r=20, t=10, b=10),
+                            height=380,
+                            xaxis_title=None,
+                            yaxis_title=None,
+                            coloraxis_showscale=False,
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(family="sans-serif", size=12)
+                        )
+                        st.plotly_chart(fig_hbar, use_container_width=True)
+
+                    else:  # ツリーマップ
+                        fig_tree = px.treemap(
+                            df_cat,
+                            path=["カテゴリー"],
+                            values="金額",
+                            color="金額",
+                            color_continuous_scale="Teal"
+                        )
+                        fig_tree.update_traces(
+                            textinfo="label+value+percent root",
+                            texttemplate="<b>%{label}</b><br>¥%{value:,.0f}<br>%{percentRoot:.1%}"
+                        )
+                        fig_tree.update_layout(
+                            margin=dict(l=10, r=10, t=10, b=10),
+                            height=380,
+                            coloraxis_showscale=False,
+                            font=dict(family="sans-serif")
+                        )
+                        st.plotly_chart(fig_tree, use_container_width=True)
                 else:
                     st.info("データがありません。")
 
