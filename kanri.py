@@ -19,6 +19,9 @@ import streamlit as st
 import tempfile
 import time
 
+# Streamlit 初期設定（最上部で実行）
+st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
+
 # Supabase SDK
 try:
     from supabase import create_client, Client
@@ -61,6 +64,7 @@ CATEGORIES = [
     "娯楽・趣味・書籍",
     "衣服・美容",
     "医療・健康",
+    "特別費 (大型出費・冠婚葬祭)",
     "その他"
 ]
 
@@ -102,6 +106,7 @@ Rules for Category:
 - "娯楽・趣味・書籍": Games, books, leisure, hobby supplies.
 - "衣服・美容": Apparel, haircuts, beauty services.
 - "医療・健康": Clinic fees, prescription medicines, supplements.
+- "特別費 (大型出費・冠婚葬祭)": Annual taxes, vehicle inspections (車検), moving expenses, travel/hotel bills, wedding/funeral expenses, extraordinary lump-sum repairs.
 - "その他": Anything not matching above.
 
 Important Extraction Rules:
@@ -121,6 +126,11 @@ def infer_category_rule(store_name, items, default_category="その他"):
             
     items_text = " ".join(item_names).lower()
     store_text = str(store_name).lower()
+
+    # ステップ1: 明細キーワードを最優先
+    special_keywords = ["車検", "自動車税", "住民税", "固定資産", "納税", "旅行", "ホテル", "旅館", "航空券", "引越", "祝儀", "香典"]
+    if any(k in items_text for k in special_keywords):
+        return "特別費 (大型出費・冠婚葬祭)"
 
     daily_keywords = [
         "洗濯", "洗剤", "柔軟剤", "ソフター", "漂白剤", "アタック", "ボールド", "ナノックス",
@@ -143,9 +153,11 @@ def infer_category_rule(store_name, items, default_category="その他"):
     if any(k in items_text for k in hobby_keywords):
         return "娯楽・趣味・書籍"
 
+    # ステップ2: AI推論
     if default_category in CATEGORIES and default_category != "その他":
         return default_category
 
+    # ステップ3: 店舗名
     if any(k in store_text for k in ["ドラッグ", "薬局", "サンドラッグ", "コスモス", "マツキヨ", "ダイソー", "セリア", "キャンドゥ"]):
         return "日用品・消耗品"
     if any(k in store_text for k in ["マクドナルド", "すき家", "スタバ", "スターバックス", "カフェ", "居酒屋", "食堂", "ラーメン", "レストラン"]):
@@ -156,6 +168,8 @@ def infer_category_rule(store_name, items, default_category="その他"):
         return "交通費・ガソリン"
     if any(k in store_text for k in ["ヨドバシ", "ビックカメラ", "ヤマダ", "edion"]):
         return "住居・家具・家電"
+    if any(k in store_text for k in ["ホテル", "旅館", "トラベル", "ツーリスト", "jal", "ana"]):
+        return "特別費 (大型出費・冠婚葬祭)"
 
     return "その他"
 
@@ -183,6 +197,7 @@ def analyze_expenses_with_gemini(summary_text, api_key):
 4. **アドバイザーからの一言エール**
 
 ※批判的にならず、前向きに楽しく節約できるトーンでアドバイスを作成してください。
+※「特別費」がある場合は、突発的・一時的な出費として日常の生活費と区別して評価してください。
 """
     response = client.models.generate_content(
         model="gemini-3.6-flash",
@@ -297,7 +312,6 @@ def save_receipt_with_items(date, store_name, total_amount, discount, points_use
         except Exception as e:
             st.error(f"Supabase登録エラー: {e}")
 
-    # SQLite フォールバック
     conn = sqlite3.connect("receipt_data.db")
     cursor = conn.cursor()
     cursor.execute(
@@ -970,7 +984,7 @@ def main():
                     hide_index=True
                 )
 
-            # --- AI家計簿診断エリア (正常なインデント位置に配置) ---
+            # --- AI家計簿診断エリア ---
             st.write("---")
             st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
             st.caption("Geminiが現在の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
