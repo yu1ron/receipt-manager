@@ -227,7 +227,7 @@ def save_api_key_to_secrets(key_name, key_value):
             f.write(f'{k} = "{v}"\n')
 
 # ==========================================
-# 2. データベース操作（Supabase / SQLite ハイブリッド）
+# 2. データベース操作（Supabase / SQLite ハイブリッド & キャッシュ対応）
 # ==========================================
 def get_supabase_client():
     """Supabase クライアントの取得（設定がない場合は None）"""
@@ -273,7 +273,8 @@ def setup_database():
     conn.close()
 
 def save_receipt_with_items(date, store_name, total_amount, discount, points_used, category, items, tax_data):
-    """レシートと明細を保存 (Supabase優先)"""
+    """レシートと明細を保存 (Supabase優先) & キャッシュ破棄"""
+    st.cache_data.clear()
     sp = get_supabase_client()
     if sp:
         try:
@@ -335,8 +336,9 @@ def save_receipt_with_items(date, store_name, total_amount, discount, points_use
     conn.close()
     return receipt_id
 
+@st.cache_data(ttl=60)
 def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None):
-    """レシート一覧と紐づく明細を一括取得（高速化版）"""
+    """レシート一覧と紐づく明細を一括取得（キャッシュ付き高速化）"""
     sp = get_supabase_client()
     if sp:
         try:
@@ -402,8 +404,9 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
     conn.close()
     return receipts
 
+@st.cache_data(ttl=60)
 def get_monthly_summary():
-    """月別集計"""
+    """月別集計（キャッシュ付き）"""
     all_data = get_all_receipts()
     if not all_data:
         return []
@@ -419,8 +422,9 @@ def get_monthly_summary():
     
     return [(row["month"], int(row["amount"]), int(row.get("tax_8_tax", 0)), int(row.get("tax_10_tax", 0))) for _, row in grouped.iterrows()]
 
+@st.cache_data(ttl=60)
 def get_category_summary(month=None):
-    """カテゴリー別集計"""
+    """カテゴリー別集計（キャッシュ付き）"""
     all_data = get_all_receipts()
     if not all_data:
         return []
@@ -435,7 +439,8 @@ def get_category_summary(month=None):
     return [(row["category"], int(row["amount"])) for _, row in grouped.iterrows()]
 
 def update_full_receipt(receipt_id, date, store_name, total_amount, discount, points_used, category, tax_type, t8_tax, t10_tax, items):
-    """レシート更新"""
+    """レシート更新 & キャッシュ破棄"""
+    st.cache_data.clear()
     sp = get_supabase_client()
     if sp:
         try:
@@ -478,7 +483,8 @@ def update_full_receipt(receipt_id, date, store_name, total_amount, discount, po
     return True
 
 def delete_receipt(receipt_id):
-    """レシートおよび紐づく明細を完全削除"""
+    """レシートおよび紐づく明細を完全削除 & キャッシュ破棄"""
+    st.cache_data.clear()
     r_id = int(receipt_id)
     sp = get_supabase_client()
     if sp:
