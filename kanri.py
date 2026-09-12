@@ -691,7 +691,7 @@ def parse_with_tesseract(uploaded_file):
     }
 
 # ==========================================
-# 4. Streamlit UI
+# 4. Streamlit UI (ダイアログ・ポップアップ)
 # ==========================================
 @st.dialog("⚠️ 削除の確認")
 def confirm_delete_dialog(receipt_id, store_name, total_amount):
@@ -708,6 +708,14 @@ def confirm_delete_dialog(receipt_id, store_name, total_amount):
     with col_no:
         if st.button("キャンセル", type="secondary", use_container_width=True):
             st.rerun()
+
+@st.dialog("🤖 AI家計診断・支出改善アドバイス")
+def show_advice_dialog(target_period, advice_content):
+    st.caption(f"対象期間: **{target_period}** の支出傾向を分析した改善提案です。")
+    st.markdown(advice_content)
+    st.write("---")
+    if st.button("閉じる", type="primary", use_container_width=True):
+        st.rerun()
 
 def main():
     setup_database()
@@ -944,7 +952,7 @@ def main():
                     st.session_state["batch_parsed_data"] = {}
                     st.rerun()
 
-    # --- タブ2: 支出ダッシュボード（正常復旧レイアウト） ---
+    # --- タブ2: 支出ダッシュボード ---
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
@@ -996,7 +1004,7 @@ def main():
                 if "target_selected_month" not in st.session_state or st.session_state["target_selected_month"] not in available_months:
                     st.session_state["target_selected_month"] = "全期間"
 
-                # 画面上部：月選択ピルとクイックAI診断ボタンを横並びで配置
+                # 画面上部：月選択ピルとクイックAI診断ボタン
                 c_top_pill, c_top_btn = st.columns([3, 1.2])
                 with c_top_pill:
                     quick_month = st.pills(
@@ -1013,8 +1021,8 @@ def main():
                 active_m = st.session_state.get("target_selected_month", "全期間")
 
                 with c_top_btn:
-                    st.write("") # 上部余白合わせ
-                    trigger_quick_ai = st.button("✨ 今すぐAI診断", type="primary", use_container_width=True, help="現在の選択月をAIが分析します")
+                    st.write("")
+                    trigger_quick_ai = st.button("✨ 今すぐAI診断", type="primary", use_container_width=True, help="現在の選択月をAIが分析してポップアップ表示します")
 
                 col_chart_left, col_chart_right = st.columns([1, 1])
 
@@ -1183,6 +1191,7 @@ def main():
 
                 btn_bottom_diagnose = st.button(f"✨ {active_m} の支出をAIに診断してもらう", type="primary", use_container_width=True, key="bottom_diagnose_btn")
 
+                # 上部ボタンまたは下部ボタンが押された場合に診断を実行し、ポップアップを表示
                 if (btn_bottom_diagnose or trigger_quick_ai):
                     with st.spinner(f"AIが {active_m} の家計データを分析して改善策を考えています..."):
                         try:
@@ -1212,11 +1221,16 @@ def main():
 
                             advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
                             st.session_state[f"advice_{active_m}"] = advice
+                            
+                            # ポップアップダイアログを即時呼び出し
+                            show_advice_dialog(active_m, advice)
                         except Exception as e:
                             st.error(f"診断エラー: {e}")
 
+                # 過去に診断した結果があれば下部にもアコーディオンで常時再確認可能にする
                 if f"advice_{active_m}" in st.session_state:
-                    st.info(st.session_state[f"advice_{active_m}"])
+                    with st.expander(f"📋 直近の {active_m} 診断結果を再確認する", expanded=False):
+                        st.markdown(st.session_state[f"advice_{active_m}"])
             else:
                 st.info("集計対象のデータがまだ登録されていません。")
 
