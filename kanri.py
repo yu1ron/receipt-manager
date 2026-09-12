@@ -7,7 +7,6 @@ from PIL import Image, ImageOps
 import re
 import sqlite3
 import streamlit as st
-import streamlit.components.v1 as components
 import tempfile
 import time
 
@@ -117,7 +116,6 @@ Important Extraction Rules:
 """
 
 def infer_category_rule(store_name, items, default_category="その他"):
-    """商品明細と店舗名からカテゴリーを高精度に推論・補正"""
     item_names = []
     for it in items:
         if isinstance(it, dict):
@@ -172,7 +170,6 @@ def infer_category_rule(store_name, items, default_category="その他"):
     return "その他"
 
 def analyze_expenses_with_gemini(summary_text, api_key):
-    """Geminiに支出データを渡して改善アドバイスを生成"""
     if not api_key:
         raise ValueError("Gemini APIキーが未設定です。")
     if genai is None:
@@ -207,7 +204,6 @@ def analyze_expenses_with_gemini(summary_text, api_key):
 # 1. 秘密情報 (secrets.toml) の書き込み・保存
 # ==========================================
 def save_api_key_to_secrets(key_name, key_value):
-    """画面から入力されたAPIキーを .streamlit/secrets.toml に永続保存"""
     if not key_value:
         return
     secrets_dir = ".streamlit"
@@ -228,10 +224,9 @@ def save_api_key_to_secrets(key_name, key_value):
             f.write(f'{k} = "{v}"\n')
 
 # ==========================================
-# 2. データベース操作（Supabase / SQLite ハイブリッド & キャッシュ対応）
+# 2. データベース操作
 # ==========================================
 def get_supabase_client():
-    """Supabase クライアントの取得（設定がない場合は None）"""
     url = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", ""))
     key = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY", ""))
     if url and key and create_client:
@@ -242,7 +237,6 @@ def get_supabase_client():
     return None
 
 def setup_database():
-    """SQLite用ローカルテーブル初期化（Supabase未設定時のフォールバック）"""
     conn = sqlite3.connect("receipt_data.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -274,7 +268,6 @@ def setup_database():
     conn.close()
 
 def save_receipt_with_items(date, store_name, total_amount, discount, points_used, category, items, tax_data):
-    """レシートと明細を保存 (Supabase優先) & キャッシュ破棄"""
     st.cache_data.clear()
     sp = get_supabase_client()
     if sp:
@@ -339,7 +332,6 @@ def save_receipt_with_items(date, store_name, total_amount, discount, points_use
 
 @st.cache_data(ttl=60)
 def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None):
-    """レシート一覧と紐づく明細を一括取得（キャッシュ付き高速化）"""
     sp = get_supabase_client()
     if sp:
         try:
@@ -407,7 +399,6 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
 
 @st.cache_data(ttl=60)
 def get_monthly_summary():
-    """月別集計（キャッシュ付き）"""
     all_data = get_all_receipts()
     if not all_data:
         return []
@@ -425,7 +416,6 @@ def get_monthly_summary():
 
 @st.cache_data(ttl=60)
 def get_category_summary(month=None):
-    """カテゴリー別集計（キャッシュ付き）"""
     all_data = get_all_receipts()
     if not all_data:
         return []
@@ -440,7 +430,6 @@ def get_category_summary(month=None):
     return [(row["category"], int(row["amount"])) for _, row in grouped.iterrows()]
 
 def update_full_receipt(receipt_id, date, store_name, total_amount, discount, points_used, category, tax_type, t8_tax, t10_tax, items):
-    """レシート更新 & キャッシュ破棄"""
     st.cache_data.clear()
     sp = get_supabase_client()
     if sp:
@@ -484,7 +473,6 @@ def update_full_receipt(receipt_id, date, store_name, total_amount, discount, po
     return True
 
 def delete_receipt(receipt_id):
-    """レシートおよび紐づく明細を完全削除 & キャッシュ破棄"""
     st.cache_data.clear()
     r_id = int(receipt_id)
     sp = get_supabase_client()
@@ -956,11 +944,11 @@ def main():
                     st.session_state["batch_parsed_data"] = {}
                     st.rerun()
 
-    # --- タブ2: 支出ダッシュボード ---
+    # --- タブ2: 支出ダッシュボード（正常復旧レイアウト） ---
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
-        # ドリルダウン（特定カテゴリー詳細表示中）
+        # ドリルダウン表示
         if st.session_state.get("drilldown_cat"):
             d_cat = st.session_state["drilldown_cat"]
             d_m = st.session_state.get("drilldown_month", "全期間")
@@ -1008,15 +996,25 @@ def main():
                 if "target_selected_month" not in st.session_state or st.session_state["target_selected_month"] not in available_months:
                     st.session_state["target_selected_month"] = "全期間"
 
-                quick_month = st.pills(
-                    "📅 表示月を選択",
-                    available_months,
-                    selection_mode="single",
-                    default=st.session_state["target_selected_month"],
-                    key="pills_month_select"
-                )
-                if quick_month and quick_month != st.session_state["target_selected_month"]:
-                    st.session_state["target_selected_month"] = quick_month
+                # 画面上部：月選択ピルとクイックAI診断ボタンを横並びで配置
+                c_top_pill, c_top_btn = st.columns([3, 1.2])
+                with c_top_pill:
+                    quick_month = st.pills(
+                        "📅 表示月を選択",
+                        available_months,
+                        selection_mode="single",
+                        default=st.session_state["target_selected_month"],
+                        key="pills_month_select"
+                    )
+                    if quick_month and quick_month != st.session_state["target_selected_month"]:
+                        st.session_state["target_selected_month"] = quick_month
+                        st.rerun()
+
+                active_m = st.session_state.get("target_selected_month", "全期間")
+
+                with c_top_btn:
+                    st.write("") # 上部余白合わせ
+                    trigger_quick_ai = st.button("✨ 今すぐAI診断", type="primary", use_container_width=True, help="現在の選択月をAIが分析します")
 
                 col_chart_left, col_chart_right = st.columns([1, 1])
 
@@ -1040,12 +1038,11 @@ def main():
                         texttemplate='¥%{text:,.0f}',
                         textposition='outside',
                         marker_line_width=0,
-                        opacity=0.85,
-                        hoverinfo="skip"
+                        opacity=0.85
                     )
                     fig_bar.update_layout(
                         margin=dict(l=10, r=10, t=20, b=10),
-                        height=340,
+                        height=350,
                         xaxis=dict(fixedrange=True),
                         yaxis=dict(fixedrange=True),
                         dragmode=False,
@@ -1054,20 +1051,10 @@ def main():
                         paper_bgcolor="rgba(0,0,0,0)",
                         font=dict(family="sans-serif", size=12)
                     )
-                    
-                    st.plotly_chart(
-                        fig_bar, 
-                        use_container_width=True, 
-                        config={
-                            "displayModeBar": False,
-                            "scrollZoom": False,
-                            "doubleClick": False
-                        }
-                    )
+                    st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
 
                 # --- 右側: カテゴリー別内訳 ---
                 with col_chart_right:
-                    active_m = st.session_state.get("target_selected_month", "全期間")
                     st.markdown(f"#### 📊 カテゴリー別内訳 ({active_m})")
                     
                     chart_style = st.selectbox(
@@ -1112,12 +1099,12 @@ def main():
                                     font=dict(size=11)
                                 ),
                                 margin=dict(l=10, r=10, t=10, b=40),
-                                height=340,
+                                height=350,
                                 plot_bgcolor="rgba(0,0,0,0)",
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 font=dict(family="sans-serif")
                             )
-                            st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+                            st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar": False})
 
                         elif chart_style == "横棒グラフ":
                             df_bar = df_cat.sort_values("金額", ascending=True)
@@ -1138,7 +1125,7 @@ def main():
                             )
                             fig_hbar.update_layout(
                                 margin=dict(l=10, r=20, t=10, b=10),
-                                height=340,
+                                height=350,
                                 xaxis=dict(fixedrange=True),
                                 yaxis=dict(fixedrange=True),
                                 dragmode=False,
@@ -1147,7 +1134,7 @@ def main():
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 font=dict(family="sans-serif", size=12)
                             )
-                            st.plotly_chart(fig_hbar, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+                            st.plotly_chart(fig_hbar, use_container_width=True, config={"displayModeBar": False})
 
                         else:  # ツリーマップ
                             fig_tree = px.treemap(
@@ -1163,11 +1150,11 @@ def main():
                             )
                             fig_tree.update_layout(
                                 margin=dict(l=10, r=10, t=10, b=10),
-                                height=340,
+                                height=350,
                                 coloraxis_showscale=False,
                                 font=dict(family="sans-serif")
                             )
-                            st.plotly_chart(fig_tree, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+                            st.plotly_chart(fig_tree, use_container_width=True, config={"displayModeBar": False})
                     else:
                         st.info(f"{active_m} のデータがありません。")
 
@@ -1189,94 +1176,14 @@ def main():
                                 st.session_state["drilldown_month"] = active_m
                                 st.rerun()
 
-                # --- 画面右下のフローティングAI診断吹き出し ---
-                if "hide_floating_ai" not in st.session_state:
-                    st.session_state["hide_floating_ai"] = False
-
-                trigger_ai_diagnosis = False
-
-                # 閉じるボタンが押されていない場合のみ表示
-                if not st.session_state["hide_floating_ai"]:
-                    # 右下に常駐させるためのフローティングコンテナ
-                    floating_box = st.container()
-                    with floating_box:
-                        st.markdown("""
-                        <style>
-                        /* 画面右下に固定するコンテナ */
-                        div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) {
-                            position: fixed !important;
-                            bottom: 24px !important;
-                            right: 20px !important;
-                            z-index: 9999 !important;
-                            background: rgba(255, 255, 255, 0.96) !important;
-                            backdrop-filter: blur(8px) !important;
-                            border: 1px solid #e0e0e0 !important;
-                            border-radius: 16px !important;
-                            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15) !important;
-                            padding: 10px 14px 10px 14px !important;
-                            max-width: 290px !important;
-                            transition: opacity 0.3s ease, transform 0.3s ease !important;
-                        }
-                        /* 最下部アンカーが見えたらフェードアウト */
-                        .ai-float-hidden {
-                            opacity: 0 !important;
-                            pointer-events: none !important;
-                            transform: translateY(15px) !important;
-                        }
-                        @media (prefers-color-scheme: dark) {
-                            div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) {
-                                background: rgba(30, 30, 30, 0.95) !important;
-                                border: 1px solid #444 !important;
-                                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
-                            }
-                        }
-                        </style>
-                        <div id="floating-ai-marker"></div>
-                        """, unsafe_allow_html=True)
-
-                        col_f_msg, col_f_close = st.columns([4, 1])
-                        with col_f_msg:
-                            st.markdown(f"🤖 **{active_m} の家計診断**")
-                        with col_f_close:
-                            if st.button("✕", key="close_float_ai", help="吹き出しを閉じる"):
-                                st.session_state["hide_floating_ai"] = True
-                                st.rerun()
-
-                        if st.button(f"✨ 今すぐ改善提案を聞く", key="btn_float_diagnose", type="primary", use_container_width=True):
-                            trigger_ai_diagnosis = True
-
-                    # 最下部の診断エリア（#ai-diagnosis-anchor）が画面に入ったら自動で消すJavaScript
-                    components.html("""
-                    <script>
-                    const observer = new IntersectionObserver((entries) => {
-                        const marker = window.parent.document.querySelector('div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker)');
-                        if (!marker) return;
-                        entries.forEach(entry => {
-                            if (entry.isIntersecting) {
-                                marker.classList.add('ai-float-hidden');
-                            } else {
-                                marker.classList.remove('ai-float-hidden');
-                            }
-                        });
-                    }, { threshold: 0.1 });
-
-                    setTimeout(() => {
-                        const target = window.parent.document.getElementById('ai-diagnosis-anchor');
-                        if (target) observer.observe(target);
-                    }, 500);
-                    </script>
-                    """, height=0, width=0)
-
-                # --- AI家計簿診断エリア（最下部アンカー配置） ---
+                # --- AI家計簿診断エリア ---
                 st.write("---")
-                # 自動非表示判定用アンカー
-                st.markdown('<div id="ai-diagnosis-anchor"></div>', unsafe_allow_html=True)
                 st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
                 st.caption(f"Geminiが {active_m} の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
 
                 btn_bottom_diagnose = st.button(f"✨ {active_m} の支出をAIに診断してもらう", type="primary", use_container_width=True, key="bottom_diagnose_btn")
 
-                if (btn_bottom_diagnose or trigger_ai_diagnosis):
+                if (btn_bottom_diagnose or trigger_quick_ai):
                     with st.spinner(f"AIが {active_m} の家計データを分析して改善策を考えています..."):
                         try:
                             summary_lines = [
