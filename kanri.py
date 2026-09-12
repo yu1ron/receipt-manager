@@ -7,6 +7,7 @@ from PIL import Image, ImageOps
 import re
 import sqlite3
 import streamlit as st
+import streamlit.components.v1 as components
 import tempfile
 import time
 
@@ -955,7 +956,7 @@ def main():
                     st.session_state["batch_parsed_data"] = {}
                     st.rerun()
 
-    # --- タブ2: 支出ダッシュボード (ズーム・サイズ固定化) ---
+    # --- タブ2: 支出ダッシュボード ---
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
@@ -1007,7 +1008,6 @@ def main():
                 if "target_selected_month" not in st.session_state or st.session_state["target_selected_month"] not in available_months:
                     st.session_state["target_selected_month"] = "全期間"
 
-                # クイック月選択ピル
                 quick_month = st.pills(
                     "📅 表示月を選択",
                     available_months,
@@ -1020,7 +1020,7 @@ def main():
 
                 col_chart_left, col_chart_right = st.columns([1, 1])
 
-                # --- 左側: 月別支出推移（サイズ・軸を完全固定） ---
+                # --- 左側: 月別支出推移 ---
                 with col_chart_left:
                     latest_m, latest_tot, _, _ = summary_data[0]
                     st.markdown(f"#### 📈 月別支出推移 (最新: {latest_m} ¥{latest_tot:,})")
@@ -1043,7 +1043,6 @@ def main():
                         opacity=0.85,
                         hoverinfo="skip"
                     )
-                    # ズーム・拡大縮小・ドラッグ操作を完全無効化
                     fig_bar.update_layout(
                         margin=dict(l=10, r=10, t=20, b=10),
                         height=340,
@@ -1190,13 +1189,95 @@ def main():
                                 st.session_state["drilldown_month"] = active_m
                                 st.rerun()
 
-                # --- AI家計簿診断エリア ---
+                # --- 画面右下のフローティングAI診断吹き出し ---
+                if "hide_floating_ai" not in st.session_state:
+                    st.session_state["hide_floating_ai"] = False
+
+                trigger_ai_diagnosis = False
+
+                # 閉じるボタンが押されていない場合のみ表示
+                if not st.session_state["hide_floating_ai"]:
+                    # 右下に常駐させるためのフローティングコンテナ
+                    floating_box = st.container()
+                    with floating_box:
+                        st.markdown("""
+                        <style>
+                        /* 画面右下に固定するコンテナ */
+                        div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) {
+                            position: fixed !important;
+                            bottom: 24px !important;
+                            right: 20px !important;
+                            z-index: 9999 !important;
+                            background: rgba(255, 255, 255, 0.96) !important;
+                            backdrop-filter: blur(8px) !important;
+                            border: 1px solid #e0e0e0 !important;
+                            border-radius: 16px !important;
+                            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15) !important;
+                            padding: 10px 14px 10px 14px !important;
+                            max-width: 290px !important;
+                            transition: opacity 0.3s ease, transform 0.3s ease !important;
+                        }
+                        /* 最下部アンカーが見えたらフェードアウト */
+                        .ai-float-hidden {
+                            opacity: 0 !important;
+                            pointer-events: none !important;
+                            transform: translateY(15px) !important;
+                        }
+                        @media (prefers-color-scheme: dark) {
+                            div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker) {
+                                background: rgba(30, 30, 30, 0.95) !important;
+                                border: 1px solid #444 !important;
+                                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+                            }
+                        }
+                        </style>
+                        <div id="floating-ai-marker"></div>
+                        """, unsafe_allow_html=True)
+
+                        col_f_msg, col_f_close = st.columns([4, 1])
+                        with col_f_msg:
+                            st.markdown(f"🤖 **{active_m} の家計診断**")
+                        with col_f_close:
+                            if st.button("✕", key="close_float_ai", help="吹き出しを閉じる"):
+                                st.session_state["hide_floating_ai"] = True
+                                st.rerun()
+
+                        if st.button(f"✨ 今すぐ改善提案を聞く", key="btn_float_diagnose", type="primary", use_container_width=True):
+                            trigger_ai_diagnosis = True
+
+                    # 最下部の診断エリア（#ai-diagnosis-anchor）が画面に入ったら自動で消すJavaScript
+                    components.html("""
+                    <script>
+                    const observer = new IntersectionObserver((entries) => {
+                        const marker = window.parent.document.querySelector('div[data-testid="stVerticalBlock"]:has(> div #floating-ai-marker)');
+                        if (!marker) return;
+                        entries.forEach(entry => {
+                            if (entry.isIntersecting) {
+                                marker.classList.add('ai-float-hidden');
+                            } else {
+                                marker.classList.remove('ai-float-hidden');
+                            }
+                        });
+                    }, { threshold: 0.1 });
+
+                    setTimeout(() => {
+                        const target = window.parent.document.getElementById('ai-diagnosis-anchor');
+                        if (target) observer.observe(target);
+                    }, 500);
+                    </script>
+                    """, height=0, width=0)
+
+                # --- AI家計簿診断エリア（最下部アンカー配置） ---
                 st.write("---")
+                # 自動非表示判定用アンカー
+                st.markdown('<div id="ai-diagnosis-anchor"></div>', unsafe_allow_html=True)
                 st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
                 st.caption(f"Geminiが {active_m} の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
 
-                if st.button(f"✨ {active_m} の支出をAIに診断してもらう", type="primary", use_container_width=True):
-                    with st.spinner("AIが家計データを分析して改善策を考えています..."):
+                btn_bottom_diagnose = st.button(f"✨ {active_m} の支出をAIに診断してもらう", type="primary", use_container_width=True, key="bottom_diagnose_btn")
+
+                if (btn_bottom_diagnose or trigger_ai_diagnosis):
+                    with st.spinner(f"AIが {active_m} の家計データを分析して改善策を考えています..."):
                         try:
                             summary_lines = [
                                 f"- 対象期間: {active_m}",
