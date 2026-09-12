@@ -957,11 +957,11 @@ def main():
                     st.session_state["batch_parsed_data"] = {}
                     st.rerun()
 
-    # --- タブ2: 支出ダッシュボード (最適化・並列レイアウト) ---
+    # --- タブ2: 支出ダッシュボード (グラフタップ連動) ---
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
-        # ドリルダウン表示
+        # ドリルダウン（特定カテゴリー詳細表示中）
         if st.session_state.get("drilldown_cat"):
             d_cat = st.session_state["drilldown_cat"]
             d_m = st.session_state.get("drilldown_month", "全期間")
@@ -1002,17 +1002,20 @@ def main():
                 st.info("該当するレシートデータがありません。")
 
         else:
-            # 通常ダッシュボード
             summary_data = get_monthly_summary()
 
             if summary_data:
-                # 左右並列配置（左: 月別推移グラフ / 右: カテゴリー別内訳）
+                available_months = ["全期間"] + [row[0] for row in summary_data]
+                if "cat_month_select" not in st.session_state or st.session_state["cat_month_select"] not in available_months:
+                    st.session_state["cat_month_select"] = "全期間"
+
                 col_chart_left, col_chart_right = st.columns([1, 1])
 
+                # --- 左側: 月別支出推移（棒グラフ） ---
                 with col_chart_left:
-                    # 最新月のサマリーをタイトル横に簡潔に表示
                     latest_m, latest_tot, _, _ = summary_data[0]
                     st.markdown(f"#### 📈 月別支出推移 (最新: {latest_m} ¥{latest_tot:,})")
+                    st.caption("💡 棒をタップすると、その月のカテゴリー内訳が右側に表示されます。")
 
                     df_monthly = pd.DataFrame(summary_data, columns=["月", "合計金額", "8%消費税", "10%消費税"])
                     df_monthly_sorted = df_monthly.sort_values("月")
@@ -1041,14 +1044,34 @@ def main():
                         paper_bgcolor="rgba(0,0,0,0)",
                         font=dict(family="sans-serif", size=12)
                     )
-                    st.plotly_chart(fig_bar, use_container_width=True)
+                    
+                    # 棒グラフのタップイベントを検知
+                    chart_event = st.plotly_chart(
+                        fig_bar, 
+                        use_container_width=True, 
+                        on_select="rerun", 
+                        selection_mode="points",
+                        key="monthly_bar_chart"
+                    )
 
+                    # 棒がタップされたら選択月を同期して即時リラン
+                    if chart_event and "selection" in chart_event and chart_event["selection"]["points"]:
+                        clicked_month = chart_event["selection"]["points"][0].get("x")
+                        if clicked_month and clicked_month != st.session_state["cat_month_select"]:
+                            st.session_state["cat_month_select"] = clicked_month
+                            st.rerun()
+
+                # --- 右側: カテゴリー別内訳 ---
                 with col_chart_right:
                     st.markdown("#### 📊 カテゴリー別内訳")
                     c_sel1, c_sel2 = st.columns(2)
                     with c_sel1:
-                        available_months = ["全期間"] + [row[0] for row in summary_data]
-                        selected_month = st.selectbox("表示月を選択", available_months, index=0, key="cat_month_select")
+                        # セレクトボックスとsession_stateを双方向連動
+                        selected_month = st.selectbox(
+                            "表示月を選択", 
+                            available_months, 
+                            key="cat_month_select"
+                        )
                     with c_sel2:
                         chart_style = st.selectbox("形式を選択", ["ドーナツ", "横棒グラフ", "ツリーマップ"], index=0, key="cat_chart_type")
 
@@ -1143,7 +1166,7 @@ def main():
                             )
                             st.plotly_chart(fig_tree, use_container_width=True)
                     else:
-                        st.info("データがありません。")
+                        st.info(f"{selected_month} のデータがありません。")
 
                 st.write("---")
                 # カテゴリー別詳細 & ワンタップジャンプ
@@ -1166,9 +1189,9 @@ def main():
                 # --- AI家計簿診断エリア ---
                 st.write("---")
                 st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
-                st.caption("Geminiが現在の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
+                st.caption(f"Geminiが {selected_month} の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
 
-                if st.button("✨ この月の支出をAIに診断してもらう", type="primary", use_container_width=True):
+                if st.button(f"✨ {selected_month} の支出をAIに診断してもらう", type="primary", use_container_width=True):
                     with st.spinner("AIが家計データを分析して改善策を考えています..."):
                         try:
                             summary_lines = [
