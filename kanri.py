@@ -957,25 +957,24 @@ def main():
                     st.session_state["batch_parsed_data"] = {}
                     st.rerun()
 
-    # --- タブ2: 支出ダッシュボード (Plotly & ドリルダウン) ---
+    # --- タブ2: 支出ダッシュボード (最適化・並列レイアウト) ---
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
-        # ドリルダウン（特定カテゴリー詳細表示中）の場合
+        # ドリルダウン表示
         if st.session_state.get("drilldown_cat"):
             d_cat = st.session_state["drilldown_cat"]
             d_m = st.session_state.get("drilldown_month", "全期間")
             
             c_back1, c_back2 = st.columns([1.5, 3])
             with c_back1:
-                if st.button("↩️ グラフ・全体サマリーに戻る", type="primary", use_container_width=True):
+                if st.button("↩️ 全体サマリーに戻る", type="primary", use_container_width=True):
                     st.session_state["drilldown_cat"] = None
                     st.session_state["drilldown_month"] = None
                     st.rerun()
             with c_back2:
                 st.markdown(f"### 📂 【{d_cat}】の内訳一覧 ({d_m})")
 
-            # 該当カテゴリーのレシートを抽出
             all_recs = get_all_receipts()
             filtered_drill = [r for r in all_recs if r.get("category") == d_cat]
             if d_m != "全期間":
@@ -1003,24 +1002,18 @@ def main():
                 st.info("該当するレシートデータがありません。")
 
         else:
-            # 通常のダッシュボード表示
+            # 通常ダッシュボード
             summary_data = get_monthly_summary()
 
             if summary_data:
-                cols = st.columns(min(len(summary_data), 4))
-                for idx, (month, total, sum_t8, sum_t10) in enumerate(summary_data[:4]):
-                    with cols[idx]:
-                        st.metric(
-                            label=f"📅 {month} 総支出",
-                            value=f"¥{total:,}",
-                            help=f"内訳: 8%税 ¥{sum_t8 or 0:,} / 10%税 ¥{sum_t10 or 0:,}"
-                        )
-
-                st.write("---")
-                col_chart_left, col_chart_right = st.columns([1.1, 0.9])
+                # 左右並列配置（左: 月別推移グラフ / 右: カテゴリー別内訳）
+                col_chart_left, col_chart_right = st.columns([1, 1])
 
                 with col_chart_left:
-                    st.markdown("#### 📈 月別支出推移")
+                    # 最新月のサマリーをタイトル横に簡潔に表示
+                    latest_m, latest_tot, _, _ = summary_data[0]
+                    st.markdown(f"#### 📈 月別支出推移 (最新: {latest_m} ¥{latest_tot:,})")
+
                     df_monthly = pd.DataFrame(summary_data, columns=["月", "合計金額", "8%消費税", "10%消費税"])
                     df_monthly_sorted = df_monthly.sort_values("月")
 
@@ -1083,7 +1076,7 @@ def main():
                                     text=f"<span style='font-size:12px;color:#888;'>合計</span><br><b style='font-size:16px;'>¥{total_cat_amt:,}</b>",
                                     x=0.5, y=0.5,
                                     showarrow=False
-                               )],
+                                )],
                                 showlegend=True,
                                 legend=dict(
                                     orientation="h",
@@ -1094,7 +1087,7 @@ def main():
                                     font=dict(size=11)
                                 ),
                                 margin=dict(l=10, r=10, t=10, b=40),
-                                height=380,
+                                height=360,
                                 plot_bgcolor="rgba(0,0,0,0)",
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 font=dict(family="sans-serif")
@@ -1120,7 +1113,7 @@ def main():
                             )
                             fig_hbar.update_layout(
                                 margin=dict(l=10, r=20, t=10, b=10),
-                                height=380,
+                                height=360,
                                 xaxis_title=None,
                                 yaxis_title=None,
                                 coloraxis_showscale=False,
@@ -1144,7 +1137,7 @@ def main():
                             )
                             fig_tree.update_layout(
                                 margin=dict(l=10, r=10, t=10, b=10),
-                                height=380,
+                                height=360,
                                 coloraxis_showscale=False,
                                 font=dict(family="sans-serif")
                             )
@@ -1153,7 +1146,7 @@ def main():
                         st.info("データがありません。")
 
                 st.write("---")
-                # カテゴリー別詳細 & ワンタップジャンプボタン
+                # カテゴリー別詳細 & ワンタップジャンプ
                 if cat_data:
                     st.markdown(f"##### 📑 {selected_month} カテゴリー別内訳（タップして履歴詳細を表示）")
                     for row_idx, r in df_cat.iterrows():
@@ -1165,7 +1158,7 @@ def main():
                         with col_l:
                             st.markdown(f"**{c_name}**: ¥{c_amt:,} ({pct_val:.1f}%)")
                         with col_r:
-                            if st.button(f"🔍 履歴を見る", key=f"jump_{c_name}_{row_idx}", use_container_width=True):
+                            if st.button("🔍 履歴を見る", key=f"jump_{c_name}_{row_idx}", use_container_width=True):
                                 st.session_state["drilldown_cat"] = c_name
                                 st.session_state["drilldown_month"] = selected_month
                                 st.rerun()
