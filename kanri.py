@@ -508,7 +508,6 @@ def delete_receipt(receipt_id):
 # 3. 解析エンジン処理
 # ==========================================
 def parse_with_gemini(uploaded_file, api_key, max_retries=4):
-    """画像・PDFからの解析"""
     if not api_key:
         raise ValueError("Gemini APIキーが未設定です。サイドバーで設定してください。")
     if genai is None:
@@ -562,7 +561,6 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
             raise e
 
 def parse_email_text_with_gemini(email_text, api_key, max_retries=3):
-    """注文確認・領収メール本文からの解析"""
     if not api_key:
         raise ValueError("Gemini APIキーが未設定です。サイドバーで設定してください。")
     if genai is None:
@@ -957,7 +955,7 @@ def main():
                     st.session_state["batch_parsed_data"] = {}
                     st.rerun()
 
-    # --- タブ2: 支出ダッシュボード (グラフタップ連動) ---
+    # --- タブ2: 支出ダッシュボード (1タップ即応 & ピル連携) ---
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
@@ -1006,8 +1004,19 @@ def main():
 
             if summary_data:
                 available_months = ["全期間"] + [row[0] for row in summary_data]
-                if "cat_month_select" not in st.session_state or st.session_state["cat_month_select"] not in available_months:
-                    st.session_state["cat_month_select"] = "全期間"
+                if "target_selected_month" not in st.session_state or st.session_state["target_selected_month"] not in available_months:
+                    st.session_state["target_selected_month"] = "全期間"
+
+                # スマホ用クイック月選択（1タップで確実に切り替わるピルボタン）
+                quick_month = st.pills(
+                    "📅 表示月をクイック選択",
+                    available_months,
+                    selection_mode="single",
+                    default=st.session_state["target_selected_month"],
+                    key="pills_month_select"
+                )
+                if quick_month and quick_month != st.session_state["target_selected_month"]:
+                    st.session_state["target_selected_month"] = quick_month
 
                 col_chart_left, col_chart_right = st.columns([1, 1])
 
@@ -1015,7 +1024,6 @@ def main():
                 with col_chart_left:
                     latest_m, latest_tot, _, _ = summary_data[0]
                     st.markdown(f"#### 📈 月別支出推移 (最新: {latest_m} ¥{latest_tot:,})")
-                    st.caption("💡 棒をタップすると、その月のカテゴリー内訳が右側に表示されます。")
 
                     df_monthly = pd.DataFrame(summary_data, columns=["月", "合計金額", "8%消費税", "10%消費税"])
                     df_monthly_sorted = df_monthly.sort_values("月")
@@ -1032,50 +1040,51 @@ def main():
                         texttemplate='¥%{text:,.0f}',
                         textposition='outside',
                         marker_line_width=0,
-                        opacity=0.85
+                        opacity=0.85,
+                        hoverinfo="skip"  # スマホでの1回タップ即反応のためホバー待機をスキップ
                     )
                     fig_bar.update_layout(
                         margin=dict(l=10, r=10, t=20, b=10),
-                        height=360,
+                        height=340,
                         xaxis_title=None,
                         yaxis_title=None,
                         coloraxis_showscale=False,
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
-                        font=dict(family="sans-serif", size=12)
+                        font=dict(family="sans-serif", size=12),
+                        clickmode="event+select"
                     )
                     
-                    # 棒グラフのタップイベントを検知
                     chart_event = st.plotly_chart(
                         fig_bar, 
                         use_container_width=True, 
                         on_select="rerun", 
                         selection_mode="points",
-                        key="monthly_bar_chart"
+                        key="monthly_bar_chart",
+                        config={"displayModeBar": False}
                     )
 
-                    # 棒がタップされたら選択月を同期して即時リラン
+                    # 棒グラフタップ時の即応判定（rerunは呼ばず値の同期のみ）
                     if chart_event and "selection" in chart_event and chart_event["selection"]["points"]:
-                        clicked_month = chart_event["selection"]["points"][0].get("x")
-                        if clicked_month and clicked_month != st.session_state["cat_month_select"]:
-                            st.session_state["cat_month_select"] = clicked_month
-                            st.rerun()
+                        pts = chart_event["selection"]["points"]
+                        if len(pts) > 0:
+                            clicked_month = pts[0].get("x")
+                            if clicked_month and clicked_month != st.session_state["target_selected_month"]:
+                                st.session_state["target_selected_month"] = clicked_month
 
                 # --- 右側: カテゴリー別内訳 ---
                 with col_chart_right:
-                    st.markdown("#### 📊 カテゴリー別内訳")
-                    c_sel1, c_sel2 = st.columns(2)
-                    with c_sel1:
-                        # セレクトボックスとsession_stateを双方向連動
-                        selected_month = st.selectbox(
-                            "表示月を選択", 
-                            available_months, 
-                            key="cat_month_select"
-                        )
-                    with c_sel2:
-                        chart_style = st.selectbox("形式を選択", ["ドーナツ", "横棒グラフ", "ツリーマップ"], index=0, key="cat_chart_type")
+                    active_m = st.session_state.get("target_selected_month", "全期間")
+                    st.markdown(f"#### 📊 カテゴリー別内訳 ({active_m})")
+                    
+                    chart_style = st.selectbox(
+                        "形式を選択", 
+                        ["ドーナツ", "横棒グラフ", "ツリーマップ"], 
+                        index=0, 
+                        key="cat_chart_type"
+                    )
 
-                    target_m = None if selected_month == "全期間" else selected_month
+                    target_m = None if active_m == "全期間" else active_m
                     cat_data = get_category_summary(target_m)
 
                     if cat_data:
@@ -1110,12 +1119,12 @@ def main():
                                     font=dict(size=11)
                                 ),
                                 margin=dict(l=10, r=10, t=10, b=40),
-                                height=360,
+                                height=340,
                                 plot_bgcolor="rgba(0,0,0,0)",
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 font=dict(family="sans-serif")
                             )
-                            st.plotly_chart(fig_donut, use_container_width=True)
+                            st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar": False})
 
                         elif chart_style == "横棒グラフ":
                             df_bar = df_cat.sort_values("金額", ascending=True)
@@ -1136,7 +1145,7 @@ def main():
                             )
                             fig_hbar.update_layout(
                                 margin=dict(l=10, r=20, t=10, b=10),
-                                height=360,
+                                height=340,
                                 xaxis_title=None,
                                 yaxis_title=None,
                                 coloraxis_showscale=False,
@@ -1144,7 +1153,7 @@ def main():
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 font=dict(family="sans-serif", size=12)
                             )
-                            st.plotly_chart(fig_hbar, use_container_width=True)
+                            st.plotly_chart(fig_hbar, use_container_width=True, config={"displayModeBar": False})
 
                         else:  # ツリーマップ
                             fig_tree = px.treemap(
@@ -1160,18 +1169,18 @@ def main():
                             )
                             fig_tree.update_layout(
                                 margin=dict(l=10, r=10, t=10, b=10),
-                                height=360,
+                                height=340,
                                 coloraxis_showscale=False,
                                 font=dict(family="sans-serif")
                             )
-                            st.plotly_chart(fig_tree, use_container_width=True)
+                            st.plotly_chart(fig_tree, use_container_width=True, config={"displayModeBar": False})
                     else:
-                        st.info(f"{selected_month} のデータがありません。")
+                        st.info(f"{active_m} のデータがありません。")
 
                 st.write("---")
                 # カテゴリー別詳細 & ワンタップジャンプ
                 if cat_data:
-                    st.markdown(f"##### 📑 {selected_month} カテゴリー別内訳（タップして履歴詳細を表示）")
+                    st.markdown(f"##### 📑 {active_m} カテゴリー別内訳（タップして履歴詳細を表示）")
                     for row_idx, r in df_cat.iterrows():
                         c_name = r["カテゴリー"]
                         c_amt = int(r["金額"])
@@ -1183,19 +1192,19 @@ def main():
                         with col_r:
                             if st.button("🔍 履歴を見る", key=f"jump_{c_name}_{row_idx}", use_container_width=True):
                                 st.session_state["drilldown_cat"] = c_name
-                                st.session_state["drilldown_month"] = selected_month
+                                st.session_state["drilldown_month"] = active_m
                                 st.rerun()
 
                 # --- AI家計簿診断エリア ---
                 st.write("---")
                 st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
-                st.caption(f"Geminiが {selected_month} の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
+                st.caption(f"Geminiが {active_m} の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
 
-                if st.button(f"✨ {selected_month} の支出をAIに診断してもらう", type="primary", use_container_width=True):
+                if st.button(f"✨ {active_m} の支出をAIに診断してもらう", type="primary", use_container_width=True):
                     with st.spinner("AIが家計データを分析して改善策を考えています..."):
                         try:
                             summary_lines = [
-                                f"- 対象期間: {selected_month}",
+                                f"- 対象期間: {active_m}",
                                 f"- 総支出額: ¥{total_cat_amt:,}"
                             ]
                             summary_lines.append("- カテゴリ別支出:")
@@ -1219,12 +1228,12 @@ def main():
                             summary_payload = "\n".join(summary_lines)
 
                             advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
-                            st.session_state[f"advice_{selected_month}"] = advice
+                            st.session_state[f"advice_{active_m}"] = advice
                         except Exception as e:
                             st.error(f"診断エラー: {e}")
 
-                if f"advice_{selected_month}" in st.session_state:
-                    st.info(st.session_state[f"advice_{selected_month}"])
+                if f"advice_{active_m}" in st.session_state:
+                    st.info(st.session_state[f"advice_{active_m}"])
             else:
                 st.info("集計対象のデータがまだ登録されていません。")
 
