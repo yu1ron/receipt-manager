@@ -955,7 +955,7 @@ def main():
                     st.session_state["batch_parsed_data"] = {}
                     st.rerun()
 
-    # --- タブ2: 支出ダッシュボード (1タップ即応 & ピル連携) ---
+    # --- タブ2: 支出ダッシュボード (ズーム・サイズ固定化) ---
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
@@ -1007,9 +1007,9 @@ def main():
                 if "target_selected_month" not in st.session_state or st.session_state["target_selected_month"] not in available_months:
                     st.session_state["target_selected_month"] = "全期間"
 
-                # スマホ用クイック月選択（1タップで確実に切り替わるピルボタン）
+                # クイック月選択ピル
                 quick_month = st.pills(
-                    "📅 表示月をクイック選択",
+                    "📅 表示月を選択",
                     available_months,
                     selection_mode="single",
                     default=st.session_state["target_selected_month"],
@@ -1020,7 +1020,7 @@ def main():
 
                 col_chart_left, col_chart_right = st.columns([1, 1])
 
-                # --- 左側: 月別支出推移（棒グラフ） ---
+                # --- 左側: 月別支出推移（サイズ・軸を完全固定） ---
                 with col_chart_left:
                     latest_m, latest_tot, _, _ = summary_data[0]
                     st.markdown(f"#### 📈 月別支出推移 (最新: {latest_m} ¥{latest_tot:,})")
@@ -1041,36 +1041,30 @@ def main():
                         textposition='outside',
                         marker_line_width=0,
                         opacity=0.85,
-                        hoverinfo="skip"  # スマホでの1回タップ即反応のためホバー待機をスキップ
+                        hoverinfo="skip"
                     )
+                    # ズーム・拡大縮小・ドラッグ操作を完全無効化
                     fig_bar.update_layout(
                         margin=dict(l=10, r=10, t=20, b=10),
                         height=340,
-                        xaxis_title=None,
-                        yaxis_title=None,
+                        xaxis=dict(fixedrange=True),
+                        yaxis=dict(fixedrange=True),
+                        dragmode=False,
                         coloraxis_showscale=False,
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
-                        font=dict(family="sans-serif", size=12),
-                        clickmode="event+select"
+                        font=dict(family="sans-serif", size=12)
                     )
                     
-                    chart_event = st.plotly_chart(
+                    st.plotly_chart(
                         fig_bar, 
                         use_container_width=True, 
-                        on_select="rerun", 
-                        selection_mode="points",
-                        key="monthly_bar_chart",
-                        config={"displayModeBar": False}
+                        config={
+                            "displayModeBar": False,
+                            "scrollZoom": False,
+                            "doubleClick": False
+                        }
                     )
-
-                    # 棒グラフタップ時の即応判定（rerunは呼ばず値の同期のみ）
-                    if chart_event and "selection" in chart_event and chart_event["selection"]["points"]:
-                        pts = chart_event["selection"]["points"]
-                        if len(pts) > 0:
-                            clicked_month = pts[0].get("x")
-                            if clicked_month and clicked_month != st.session_state["target_selected_month"]:
-                                st.session_state["target_selected_month"] = clicked_month
 
                 # --- 右側: カテゴリー別内訳 ---
                 with col_chart_right:
@@ -1124,7 +1118,7 @@ def main():
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 font=dict(family="sans-serif")
                             )
-                            st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar": False})
+                            st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
                         elif chart_style == "横棒グラフ":
                             df_bar = df_cat.sort_values("金額", ascending=True)
@@ -1146,14 +1140,15 @@ def main():
                             fig_hbar.update_layout(
                                 margin=dict(l=10, r=20, t=10, b=10),
                                 height=340,
-                                xaxis_title=None,
-                                yaxis_title=None,
+                                xaxis=dict(fixedrange=True),
+                                yaxis=dict(fixedrange=True),
+                                dragmode=False,
                                 coloraxis_showscale=False,
                                 plot_bgcolor="rgba(0,0,0,0)",
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 font=dict(family="sans-serif", size=12)
                             )
-                            st.plotly_chart(fig_hbar, use_container_width=True, config={"displayModeBar": False})
+                            st.plotly_chart(fig_hbar, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
                         else:  # ツリーマップ
                             fig_tree = px.treemap(
@@ -1173,7 +1168,7 @@ def main():
                                 coloraxis_showscale=False,
                                 font=dict(family="sans-serif")
                             )
-                            st.plotly_chart(fig_tree, use_container_width=True, config={"displayModeBar": False})
+                            st.plotly_chart(fig_tree, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
                     else:
                         st.info(f"{active_m} のデータがありません。")
 
