@@ -4,6 +4,14 @@ import io
 import json
 import os
 from PIL import Image, ImageOps
+import re
+import sqlite3
+import streamlit as st
+import tempfile
+import time
+
+# Streamlit 初期設定（最上部で実行）
+st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
 
 # pillow_heif の安全な読み込み
 try:
@@ -13,14 +21,6 @@ except ImportError:
     pillow_heif = None
 
 import pytesseract
-import re
-import sqlite3
-import streamlit as st
-import tempfile
-import time
-
-# Streamlit 初期設定（最上部で実行）
-st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
 
 # Supabase SDK
 try:
@@ -69,12 +69,12 @@ CATEGORIES = [
 ]
 
 JSON_PROMPT = f"""
-Analyze this Japanese receipt or invoice image/PDF and extract structured data in JSON format only.
+Analyze this Japanese receipt, invoice image/PDF, or order confirmation email text and extract structured data in JSON format only.
 Do not wrap the output in markdown codeblocks (e.g. ```json).
 
 Output JSON schema:
 {{
-    "store_name": "店舗名またはECサイト名 (例: Amazon.co.jp, TRIAL, セブン-イレブン など)",
+    "store_name": "店舗名またはECサイト名 (例: Amazon.co.jp, 楽天市場, TRIAL, セブン-イレブン など)",
     "date": "YYYY/MM/DD",
     "total_amount": 0,
     "discount": 0,
@@ -127,7 +127,6 @@ def infer_category_rule(store_name, items, default_category="その他"):
     items_text = " ".join(item_names).lower()
     store_text = str(store_name).lower()
 
-    # ステップ1: 明細キーワードを最優先
     special_keywords = ["車検", "自動車税", "住民税", "固定資産", "納税", "旅行", "ホテル", "旅館", "航空券", "引越", "祝儀", "香典"]
     if any(k in items_text for k in special_keywords):
         return "特別費 (大型出費・冠婚葬祭)"
@@ -153,11 +152,9 @@ def infer_category_rule(store_name, items, default_category="その他"):
     if any(k in items_text for k in hobby_keywords):
         return "娯楽・趣味・書籍"
 
-    # ステップ2: AI推論
     if default_category in CATEGORIES and default_category != "その他":
         return default_category
 
-    # ステップ3: 店舗名
     if any(k in store_text for k in ["ドラッグ", "薬局", "サンドラッグ", "コスモス", "マツキヨ", "ダイソー", "セリア", "キャンドゥ"]):
         return "日用品・消耗品"
     if any(k in store_text for k in ["マクドナルド", "すき家", "スタバ", "スターバックス", "カフェ", "居酒屋", "食堂", "ラーメン", "レストラン"]):
@@ -197,7 +194,7 @@ def analyze_expenses_with_gemini(summary_text, api_key):
 4. **アドバイザーからの一言エール**
 
 ※批判的にならず、前向きに楽しく節約できるトーンでアドバイスを作成してください。
-※「特別費」がある場合は、突発的・一時的な出費として日常の生活費と区別して評価してください。
+※「特別費」がある場合は、突発的・一時的な大型出費として日常の生活費と区別して評価してください。
 """
     response = client.models.generate_content(
         model="gemini-3.6-flash",
@@ -505,6 +502,7 @@ def delete_receipt(receipt_id):
 # 3. 解析エンジン処理
 # ==========================================
 def parse_with_gemini(uploaded_file, api_key, max_retries=4):
+    """画像・PDFからの解析"""
     if not api_key:
         raise ValueError("Gemini APIキーが未設定です。サイドバーで設定してください。")
     if genai is None:
@@ -542,6 +540,43 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
             response = client.models.generate_content(
                 model="gemini-3.6-flash",
                 contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), JSON_PROMPT],
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            text_content = response.text.strip()
+            if text_content.startswith("```json"):
+                text_content = text_content[7:]
+            if text_content.endswith("```"):
+                text_content = text_content[:-3]
+            parsed_data = json.loads(text_content.strip())
+            return parsed_data[0] if isinstance(parsed_data, list) and len(parsed_data) > 0 else parsed_data
+        except Exception as e:
+            if ("503" in str(e) or "UNAVAILABLE" in str(e) or "429" in str(e)) and attempt < max_retries - 1:
+                time.sleep((attempt + 1) * 2)
+                continue
+            raise e
+
+def parse_email_text_with_gemini(email_text, api_key, max_retries=3):
+    """注文確認・領収メール本文からの解析"""
+    if not api_key:
+        raise ValueError("Gemini APIキーが未設定です。サイドバーで設定してください。")
+    if genai is None:
+        raise ImportError("google-genai パッケージが未導入です。")
+
+    clean_key = "".join(c for c in api_key.strip() if 32 <= ord(c) <= 126)
+    client = genai.Client(api_key=clean_key)
+
+    prompt = f"""
+以下はECサイトやWebサービス、店舗等から届いた「購入確認・注文完了・領収メール」の本文です。
+内容を解析し、JSONスキーマに従って購入情報を抽出してください。
+
+【メール本文】
+{email_text}
+"""
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=[prompt, JSON_PROMPT],
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
             text_content = response.text.strip()
@@ -763,116 +798,161 @@ def main():
         if "batch_parsed_data" not in st.session_state:
             st.session_state["batch_parsed_data"] = {}
 
-        uploaded_files = st.file_uploader(
-            "レシートまたは領収書ファイルを選択 (複数選択・ドラッグ＆ドロップ可能)", 
-            type=["jpg", "jpeg", "png", "heic", "HEIC", "pdf"],
-            accept_multiple_files=True,
-            key=f"receipt_uploader_{st.session_state['uploader_key']}"
+        # 登録モード切り替え
+        input_mode = st.radio(
+            "登録方法を選択",
+            ["📷 画像・PDFアップロード", "📩 注文メール・テキスト貼り付け"],
+            horizontal=True
         )
 
-        if uploaded_files:
-            for up_file in uploaded_files:
-                file_sig = f"{up_file.name}_{up_file.size}"
-                if file_sig not in st.session_state["batch_parsed_data"]:
+        if input_mode == "📷 画像・PDFアップロード":
+            uploaded_files = st.file_uploader(
+                "レシートまたは領収書ファイルを選択 (複数選択・ドラッグ＆ドロップ可能)", 
+                type=["jpg", "jpeg", "png", "heic", "HEIC", "pdf"],
+                accept_multiple_files=True,
+                key=f"receipt_uploader_{st.session_state['uploader_key']}"
+            )
+
+            if uploaded_files:
+                for up_file in uploaded_files:
+                    file_sig = f"{up_file.name}_{up_file.size}"
+                    if file_sig not in st.session_state["batch_parsed_data"]:
+                        try:
+                            with st.spinner(f"「{up_file.name}」を解析中..."):
+                                if engine_choice == "Gemini API (推奨)":
+                                    res = parse_with_gemini(up_file, gemini_api_key)
+                                elif engine_choice == "ChatGPT (OpenAI)":
+                                    res = parse_with_openai(up_file, openai_api_key)
+                                else:
+                                    res = parse_with_tesseract(up_file)
+                                
+                                st_name = res.get("store_name", "")
+                                raw_cat = res.get("category", "その他")
+                                items_data = res.get("items", [{"name": "", "price": 0}])
+                                final_cat = infer_category_rule(st_name, items_data, raw_cat)
+
+                                st.session_state["batch_parsed_data"][file_sig] = {
+                                    "file_name": up_file.name,
+                                    "store_name": st_name,
+                                    "date": res.get("date", datetime.now().strftime("%Y/%m/%d")),
+                                    "total_amount": res.get("total_amount", 0),
+                                    "discount": res.get("discount", 0),
+                                    "points_used": res.get("points_used", 0),
+                                    "category": final_cat,
+                                    "tax_info": res.get("tax_info", {}),
+                                    "items": items_data
+                                }
+                        except Exception as e:
+                            st.error(f"「{up_file.name}」の解析エラー: {e}")
+
+        else:
+            # メール・テキスト貼り付けモード
+            st.caption("Amazon、楽天、各種サービスの注文確認・領収メール本文をそのまま貼り付けてください。")
+            with st.form("email_text_form"):
+                raw_email_text = st.text_area(
+                    "メール本文を貼り付け",
+                    placeholder="例:\n〇〇様\nAmazon.co.jp をご利用いただき、ありがとうございます。\n注文日: 2026/09/13\n注文番号: xxx-xxxxxxx-xxxxxxx\n合計: ￥4,280\n商品名: ...",
+                    height=200
+                )
+                submit_email = st.form_submit_button("✨ メール内容を解析して登録候補に追加", type="primary", use_container_width=True)
+
+            if submit_email and raw_email_text.strip():
+                with st.spinner("メール内容をAIが解析中..."):
                     try:
-                        with st.spinner(f"「{up_file.name}」を解析中..."):
-                            if engine_choice == "Gemini API (推奨)":
-                                res = parse_with_gemini(up_file, gemini_api_key)
-                            elif engine_choice == "ChatGPT (OpenAI)":
-                                res = parse_with_openai(up_file, openai_api_key)
-                            else:
-                                res = parse_with_tesseract(up_file)
-                            
-                            st_name = res.get("store_name", "")
-                            raw_cat = res.get("category", "その他")
-                            items_data = res.get("items", [{"name": "", "price": 0}])
-                            final_cat = infer_category_rule(st_name, items_data, raw_cat)
+                        res = parse_email_text_with_gemini(raw_email_text, gemini_api_key)
+                        st_name = res.get("store_name", "")
+                        raw_cat = res.get("category", "その他")
+                        items_data = res.get("items", [{"name": "", "price": 0}])
+                        final_cat = infer_category_rule(st_name, items_data, raw_cat)
 
-                            st.session_state["batch_parsed_data"][file_sig] = {
-                                "file_name": up_file.name,
-                                "store_name": st_name,
-                                "date": res.get("date", datetime.now().strftime("%Y/%m/%d")),
-                                "total_amount": res.get("total_amount", 0),
-                                "discount": res.get("discount", 0),
-                                "points_used": res.get("points_used", 0),
-                                "category": final_cat,
-                                "tax_info": res.get("tax_info", {}),
-                                "items": items_data
-                            }
+                        email_sig = f"email_{int(time.time() * 1000)}"
+                        st.session_state["batch_parsed_data"][email_sig] = {
+                            "file_name": f"メール ({st_name or '注文確認'})",
+                            "store_name": st_name,
+                            "date": res.get("date", datetime.now().strftime("%Y/%m/%d")),
+                            "total_amount": res.get("total_amount", 0),
+                            "discount": res.get("discount", 0),
+                            "points_used": res.get("points_used", 0),
+                            "category": final_cat,
+                            "tax_info": res.get("tax_info", {}),
+                            "items": items_data
+                        }
+                        st.success("メールの解析が完了しました！下の一覧で内容を確認して保存してください。")
                     except Exception as e:
-                        st.error(f"「{up_file.name}」の解析エラー: {e}")
+                        st.error(f"メール解析エラー: {e}")
 
-            if st.session_state["batch_parsed_data"]:
-                st.write(f"### 📋 解析結果一覧 ({len(st.session_state['batch_parsed_data'])} 件)")
-                all_forms_data = []
+        # 解析結果のプレビュー＆一括保存エリア
+        if st.session_state["batch_parsed_data"]:
+            st.write(f"### 📋 解析結果一覧 ({len(st.session_state['batch_parsed_data'])} 件)")
+            all_forms_data = []
 
-                for idx, (sig, pdata) in enumerate(list(st.session_state["batch_parsed_data"].items())):
-                    with st.expander(f"📄 [{idx+1}] {pdata['file_name']} - 【{pdata['store_name'] or '店舗'}】 ¥{pdata['total_amount']:,}", expanded=True):
-                        c1, c2, c3 = st.columns([3, 2, 2])
-                        with c1:
-                            val_store = st.text_input("店舗名", value=pdata["store_name"], key=f"b_store_{sig}")
-                        with c2:
-                            val_date = st.text_input("利用日付", value=pdata["date"], key=f"b_date_{sig}")
-                        with c3:
-                            val_amt = st.number_input("合計金額 (円)", value=int(pdata["total_amount"]), step=1, key=f"b_amt_{sig}")
+            for idx, (sig, pdata) in enumerate(list(st.session_state["batch_parsed_data"].items())):
+                with st.expander(f"📄 [{idx+1}] {pdata['file_name']} - 【{pdata['store_name'] or '店舗'}】 ¥{pdata['total_amount']:,}", expanded=True):
+                    c1, c2, c3 = st.columns([3, 2, 2])
+                    with c1:
+                        val_store = st.text_input("店舗名", value=pdata["store_name"], key=f"b_store_{sig}")
+                    with c2:
+                        val_date = st.text_input("利用日付", value=pdata["date"], key=f"b_date_{sig}")
+                    with c3:
+                        val_amt = st.number_input("合計金額 (円)", value=int(pdata["total_amount"]), step=1, key=f"b_amt_{sig}")
 
-                        c4, c5, c6 = st.columns([2, 2, 3])
-                        with c4:
-                            val_disc = st.number_input("値引き (円)", value=int(pdata["discount"]), step=1, key=f"b_disc_{sig}")
-                        with c5:
-                            val_pts = st.number_input("利用ポイント (pt)", value=int(pdata["points_used"]), step=1, key=f"b_pts_{sig}")
-                        with c6:
-                            cur_c = pdata["category"]
-                            c_idx = CATEGORIES.index(cur_c) if cur_c in CATEGORIES else 0
-                            val_cat = st.selectbox("カテゴリー", CATEGORIES, index=c_idx, key=f"b_cat_{sig}")
+                    c4, c5, c6 = st.columns([2, 2, 3])
+                    with c4:
+                        val_disc = st.number_input("値引き (円)", value=int(pdata["discount"]), step=1, key=f"b_disc_{sig}")
+                    with c5:
+                        val_pts = st.number_input("利用ポイント (pt)", value=int(pdata["points_used"]), step=1, key=f"b_pts_{sig}")
+                    with c6:
+                        cur_c = pdata["category"]
+                        c_idx = CATEGORIES.index(cur_c) if cur_c in CATEGORIES else 0
+                        val_cat = st.selectbox("カテゴリー", CATEGORIES, index=c_idx, key=f"b_cat_{sig}")
 
-                        tax_i = pdata.get("tax_info", {})
-                        t_col1, t_col2, t_col3 = st.columns(3)
-                        with t_col1:
-                            t_type = st.selectbox("税区分", ["外税", "内税"], index=0 if tax_i.get("tax_type") == "外税" else 1, key=f"b_ttype_{sig}")
-                        with t_col2:
-                            t8_tax = st.number_input("8% 税額", value=int(tax_i.get("tax_8_tax", 0)), step=1, key=f"b_t8_{sig}")
-                        with t_col3:
-                            t10_tax = st.number_input("10% 税額", value=int(tax_i.get("tax_10_tax", 0)), step=1, key=f"b_t10_{sig}")
+                    tax_i = pdata.get("tax_info", {})
+                    t_col1, t_col2, t_col3 = st.columns(3)
+                    with t_col1:
+                        t_type = st.selectbox("税区分", ["外税", "内税"], index=0 if tax_i.get("tax_type") == "外税" else 1, key=f"b_ttype_{sig}")
+                    with t_col2:
+                        t8_tax = st.number_input("8% 税額", value=int(tax_i.get("tax_8_tax", 0)), step=1, key=f"b_t8_{sig}")
+                    with t_col3:
+                        t10_tax = st.number_input("10% 税額", value=int(tax_i.get("tax_10_tax", 0)), step=1, key=f"b_t10_{sig}")
 
-                        st.caption("商品明細:")
-                        items_cur = []
-                        for i_idx, item in enumerate(pdata.get("items", [])):
-                            ic1, ic2 = st.columns([4, 2])
-                            with ic1:
-                                it_n = st.text_input(f"品名 {i_idx+1}", value=item.get("name", ""), key=f"b_itn_{sig}_{i_idx}")
-                            with ic2:
-                                it_p = st.number_input(f"価格 {i_idx+1}", value=int(item.get("price", 0)), step=1, key=f"b_itp_{sig}_{i_idx}")
-                            items_cur.append({"name": it_n, "price": it_p})
+                    st.caption("商品明細:")
+                    items_cur = []
+                    for i_idx, item in enumerate(pdata.get("items", [])):
+                        ic1, ic2 = st.columns([4, 2])
+                        with ic1:
+                            it_n = st.text_input(f"品名 {i_idx+1}", value=item.get("name", ""), key=f"b_itn_{sig}_{i_idx}")
+                        with ic2:
+                            it_p = st.number_input(f"価格 {i_idx+1}", value=int(item.get("price", 0)), step=1, key=f"b_itp_{sig}_{i_idx}")
+                        items_cur.append({"name": it_n, "price": it_p})
 
-                        all_forms_data.append({
-                            "sig": sig, "date": val_date, "store_name": val_store, "total_amount": val_amt,
-                            "discount": val_disc, "points_used": val_pts, "category": val_cat,
-                            "tax_data": {"tax_type": t_type, "tax_8_amount": tax_i.get("tax_8_amount", 0), "tax_8_tax": t8_tax, "tax_10_amount": tax_i.get("tax_10_amount", 0), "tax_10_tax": t10_tax},
-                            "items": items_cur
-                        })
+                    all_forms_data.append({
+                        "sig": sig, "date": val_date, "store_name": val_store, "total_amount": val_amt,
+                        "discount": val_disc, "points_used": val_pts, "category": val_cat,
+                        "tax_data": {"tax_type": t_type, "tax_8_amount": tax_i.get("tax_8_amount", 0), "tax_8_tax": t8_tax, "tax_10_amount": tax_i.get("tax_10_amount", 0), "tax_10_tax": t10_tax},
+                        "items": items_cur
+                    })
 
-                st.write("---")
-                col_save_all, col_clear = st.columns([1, 1])
-                with col_save_all:
-                    if st.button("💾 全てのレシートを一括保存する", type="primary", use_container_width=True):
-                        for r_item in all_forms_data:
-                            save_receipt_with_items(
-                                r_item["date"], r_item["store_name"], r_item["total_amount"],
-                                r_item["discount"], r_item["points_used"], r_item["category"],
-                                r_item["items"], r_item["tax_data"]
-                            )
-                        st.success(f"{len(all_forms_data)} 件のレシートを保存しました！")
-                        st.session_state["uploader_key"] += 1
-                        st.session_state["batch_parsed_data"] = {}
-                        time.sleep(0.8)
-                        st.rerun()
+            st.write("---")
+            col_save_all, col_clear = st.columns([1, 1])
+            with col_save_all:
+                if st.button("💾 全てのレシートを一括保存する", type="primary", use_container_width=True):
+                    for r_item in all_forms_data:
+                        save_receipt_with_items(
+                            r_item["date"], r_item["store_name"], r_item["total_amount"],
+                            r_item["discount"], r_item["points_used"], r_item["category"],
+                            r_item["items"], r_item["tax_data"]
+                        )
+                    st.success(f"{len(all_forms_data)} 件のレシートを保存しました！")
+                    st.session_state["uploader_key"] += 1
+                    st.session_state["batch_parsed_data"] = {}
+                    time.sleep(0.8)
+                    st.rerun()
 
-                with col_clear:
-                    if st.button("❌ キャンセル（クリア）", use_container_width=True):
-                        st.session_state["uploader_key"] += 1
-                        st.session_state["batch_parsed_data"] = {}
-                        st.rerun()
+            with col_clear:
+                if st.button("❌ キャンセル（クリア）", use_container_width=True):
+                    st.session_state["uploader_key"] += 1
+                    st.session_state["batch_parsed_data"] = {}
+                    st.rerun()
 
     # --- タブ2: 支出ダッシュボード (Plotly) ---
     with tab2:
