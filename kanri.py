@@ -415,15 +415,15 @@ def get_monthly_summary():
     return [(row["month"], int(row["amount"]), int(row.get("tax_8_tax", 0)), int(row.get("tax_10_tax", 0))) for _, row in grouped.iterrows()]
 
 @st.cache_data(ttl=60)
-def get_category_summary(month=None):
+def get_category_summary(month_str=None):
     all_data = get_all_receipts()
     if not all_data:
         return []
     df = pd.DataFrame(all_data)
     if "amount" not in df.columns and "total_amount" in df.columns:
         df["amount"] = df["total_amount"]
-    if month:
-        df = df[df["date"].astype(str).str.slice(0, 7) == month]
+    if month_str and month_str != "全期間":
+        df = df[df["date"].astype(str).str.slice(0, 7) == str(month_str)]
     if df.empty:
         return []
     grouped = df.groupby("category")["amount"].sum().reset_index().sort_values("amount", ascending=False)
@@ -1001,24 +1001,28 @@ def main():
 
             if summary_data:
                 available_months = ["全期間"] + [row[0] for row in summary_data]
-                if "target_selected_month" not in st.session_state or st.session_state["target_selected_month"] not in available_months:
-                    st.session_state["target_selected_month"] = "全期間"
+                
+                # セッション初期値の保証
+                if "dashboard_month_choice" not in st.session_state or st.session_state["dashboard_month_choice"] not in available_months:
+                    st.session_state["dashboard_month_choice"] = available_months[0]
 
                 # 画面上部：月選択ピルとクイックAI診断ボタン
                 c_top_pill, c_top_btn = st.columns([3, 1.2])
                 with c_top_pill:
-                    quick_month = st.pills(
+                    chosen_month = st.pills(
                         "📅 表示月を選択",
                         available_months,
                         selection_mode="single",
-                        default=st.session_state["target_selected_month"],
-                        key="pills_month_select"
+                        default=st.session_state["dashboard_month_choice"],
+                        key="pills_widget_selection"
                     )
-                    if quick_month and quick_month != st.session_state["target_selected_month"]:
-                        st.session_state["target_selected_month"] = quick_month
+                    # 選択値が存在する場合はセッションに即時同期
+                    if chosen_month and chosen_month != st.session_state["dashboard_month_choice"]:
+                        st.session_state["dashboard_month_choice"] = chosen_month
                         st.rerun()
 
-                active_m = st.session_state.get("target_selected_month", "全期間")
+                # 確定された表示月を単一変数として扱う
+                active_m = st.session_state["dashboard_month_choice"]
 
                 with c_top_btn:
                     st.write("")
@@ -1046,7 +1050,8 @@ def main():
                         texttemplate='¥%{text:,.0f}',
                         textposition='outside',
                         marker_line_width=0,
-                        opacity=0.85
+                        opacity=0.85,
+                        hoverinfo="skip"
                     )
                     fig_bar.update_layout(
                         margin=dict(l=10, r=10, t=20, b=10),
@@ -1061,7 +1066,7 @@ def main():
                     )
                     st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
 
-                # --- 右側: カテゴリー別内訳 ---
+                # --- 右側: カテゴリー別内訳（active_m に完全同期） ---
                 with col_chart_right:
                     st.markdown(f"#### 📊 カテゴリー別内訳 ({active_m})")
                     
@@ -1072,8 +1077,8 @@ def main():
                         key="cat_chart_type"
                     )
 
-                    target_m = None if active_m == "全期間" else active_m
-                    cat_data = get_category_summary(target_m)
+                    # active_m を確実に引数として渡す
+                    cat_data = get_category_summary(month_str=active_m)
 
                     if cat_data:
                         df_cat = pd.DataFrame(cat_data, columns=["カテゴリー", "金額"])
@@ -1191,7 +1196,6 @@ def main():
 
                 btn_bottom_diagnose = st.button(f"✨ {active_m} の支出をAIに診断してもらう", type="primary", use_container_width=True, key="bottom_diagnose_btn")
 
-                # 上部ボタンまたは下部ボタンが押された場合に診断を実行し、ポップアップを表示
                 if (btn_bottom_diagnose or trigger_quick_ai):
                     with st.spinner(f"AIが {active_m} の家計データを分析して改善策を考えています..."):
                         try:
@@ -1205,8 +1209,8 @@ def main():
                                 summary_lines.append(f"  * {r['カテゴリー']}: ¥{int(r['金額']):,} ({pct:.1f}%)")
 
                             all_recs = get_all_receipts()
-                            if target_m:
-                                target_recs = [r for r in all_recs if str(r.get("date", ""))[:7] == target_m]
+                            if active_m != "全期間":
+                                target_recs = [r for r in all_recs if str(r.get("date", ""))[:7] == active_m]
                             else:
                                 target_recs = all_recs
                             
@@ -1222,12 +1226,10 @@ def main():
                             advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
                             st.session_state[f"advice_{active_m}"] = advice
                             
-                            # ポップアップダイアログを即時呼び出し
                             show_advice_dialog(active_m, advice)
                         except Exception as e:
                             st.error(f"診断エラー: {e}")
 
-                # 過去に診断した結果があれば下部にもアコーディオンで常時再確認可能にする
                 if f"advice_{active_m}" in st.session_state:
                     with st.expander(f"📋 直近の {active_m} 診断結果を再確認する", expanded=False):
                         st.markdown(st.session_state[f"advice_{active_m}"])
