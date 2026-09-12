@@ -804,7 +804,6 @@ def main():
         if "batch_parsed_data" not in st.session_state:
             st.session_state["batch_parsed_data"] = {}
 
-        # 登録モード切り替え
         input_mode = st.radio(
             "登録方法を選択",
             ["📷 画像・PDFアップロード", "📩 注文メール・テキスト貼り付け"],
@@ -852,7 +851,6 @@ def main():
                             st.error(f"「{up_file.name}」の解析エラー: {e}")
 
         else:
-            # メール・テキスト貼り付けモード
             st.caption("Amazon、楽天、各種サービスの注文確認・領収メール本文をそのまま貼り付けてください。")
             with st.form("email_text_form"):
                 raw_email_text = st.text_area(
@@ -887,7 +885,6 @@ def main():
                     except Exception as e:
                         st.error(f"メール解析エラー: {e}")
 
-        # 解析結果のプレビュー＆一括保存エリア
         if st.session_state["batch_parsed_data"]:
             st.write(f"### 📋 解析結果一覧 ({len(st.session_state['batch_parsed_data'])} 件)")
             all_forms_data = []
@@ -960,210 +957,260 @@ def main():
                     st.session_state["batch_parsed_data"] = {}
                     st.rerun()
 
-    # --- タブ2: 支出ダッシュボード (Plotly) ---
+    # --- タブ2: 支出ダッシュボード (Plotly & ドリルダウン) ---
     with tab2:
         st.subheader("📊 支出ダッシュボード")
-        summary_data = get_monthly_summary()
 
-        if summary_data:
-            cols = st.columns(min(len(summary_data), 4))
-            for idx, (month, total, sum_t8, sum_t10) in enumerate(summary_data[:4]):
-                with cols[idx]:
-                    st.metric(
-                        label=f"📅 {month} 総支出",
-                        value=f"¥{total:,}",
-                        help=f"内訳: 8%税 ¥{sum_t8 or 0:,} / 10%税 ¥{sum_t10 or 0:,}"
-                    )
+        # ドリルダウン（特定カテゴリー詳細表示中）の場合
+        if st.session_state.get("drilldown_cat"):
+            d_cat = st.session_state["drilldown_cat"]
+            d_m = st.session_state.get("drilldown_month", "全期間")
+            
+            c_back1, c_back2 = st.columns([1.5, 3])
+            with c_back1:
+                if st.button("↩️ グラフ・全体サマリーに戻る", type="primary", use_container_width=True):
+                    st.session_state["drilldown_cat"] = None
+                    st.session_state["drilldown_month"] = None
+                    st.rerun()
+            with c_back2:
+                st.markdown(f"### 📂 【{d_cat}】の内訳一覧 ({d_m})")
 
-            st.write("---")
-            col_chart_left, col_chart_right = st.columns([1.1, 0.9])
+            # 該当カテゴリーのレシートを抽出
+            all_recs = get_all_receipts()
+            filtered_drill = [r for r in all_recs if r.get("category") == d_cat]
+            if d_m != "全期間":
+                filtered_drill = [r for r in filtered_drill if str(r.get("date", ""))[:7] == d_m]
 
-            with col_chart_left:
-                st.markdown("#### 📈 月別支出推移")
-                df_monthly = pd.DataFrame(summary_data, columns=["月", "合計金額", "8%消費税", "10%消費税"])
-                df_monthly_sorted = df_monthly.sort_values("月")
+            sub_total = sum(int(r.get("total_amount", r.get("amount", 0))) for r in filtered_drill)
+            st.caption(f"対象レシート: **{len(filtered_drill)} 件** / 合計金額: **¥{sub_total:,}**")
 
-                fig_bar = px.bar(
-                    df_monthly_sorted,
-                    x="月",
-                    y="合計金額",
-                    text="合計金額",
-                    color="合計金額",
-                    color_continuous_scale="Tealgrn",
-                )
-                fig_bar.update_traces(
-                    texttemplate='¥%{text:,.0f}',
-                    textposition='outside',
-                    marker_line_width=0,
-                    opacity=0.85
-                )
-                fig_bar.update_layout(
-                    margin=dict(l=10, r=10, t=20, b=10),
-                    height=360,
-                    xaxis_title=None,
-                    yaxis_title=None,
-                    coloraxis_showscale=False,
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font=dict(family="sans-serif", size=12)
-                )
-                st.plotly_chart(fig_bar, use_container_width=True)
+            if filtered_drill:
+                for rec in filtered_drill:
+                    amt_v = int(rec.get("total_amount", rec.get("amount", 0)))
+                    st_name = f"【{rec['store_name']}】" if rec['store_name'] else ""
+                    with st.expander(f"🧾 {rec['date']} {st_name} ¥{amt_v:,}"):
+                        st.write(f"- 店舗: {rec.get('store_name', '不明')}")
+                        st.write(f"- 日付: {rec.get('date')}")
+                        st.write(f"- 金額: ¥{amt_v:,}")
+                        items = rec.get("items", [])
+                        if items:
+                            st.caption("明細:")
+                            for it in items:
+                                it_name = it[0] if isinstance(it, (list, tuple)) else it.get("name", "")
+                                it_price = it[1] if isinstance(it, (list, tuple)) else it.get("price", 0)
+                                st.write(f"  * {it_name}: ¥{int(it_price):,}")
+            else:
+                st.info("該当するレシートデータがありません。")
 
-            with col_chart_right:
-                st.markdown("#### 📊 カテゴリー別内訳")
-                c_sel1, c_sel2 = st.columns(2)
-                with c_sel1:
-                    available_months = ["全期間"] + [row[0] for row in summary_data]
-                    selected_month = st.selectbox("表示月を選択", available_months, index=0, key="cat_month_select")
-                with c_sel2:
-                    chart_style = st.selectbox("形式を選択", ["ドーナツ", "横棒グラフ", "ツリーマップ"], index=0, key="cat_chart_type")
-
-                target_m = None if selected_month == "全期間" else selected_month
-                cat_data = get_category_summary(target_m)
-
-                if cat_data:
-                    df_cat = pd.DataFrame(cat_data, columns=["カテゴリー", "金額"])
-                    total_cat_amt = df_cat["金額"].sum()
-
-                    if chart_style == "ドーナツ":
-                        fig_donut = go.Figure(data=[go.Pie(
-                            labels=df_cat["カテゴリー"],
-                            values=df_cat["金額"],
-                            hole=0.60,
-                            textinfo="percent",
-                            textposition="inside",
-                            insidetextorientation="horizontal",
-                            hoverinfo="label+value+percent",
-                            hovertemplate="<b>%{label}</b><br>金額: ¥%{value:,.0f}<br>割合: %{percent}<extra></extra>",
-                            marker=dict(colors=px.colors.qualitative.Pastel)
-                        )])
-                        fig_donut.update_layout(
-                            annotations=[dict(
-                                text=f"<span style='font-size:12px;color:#888;'>合計</span><br><b style='font-size:16px;'>¥{total_cat_amt:,}</b>",
-                                x=0.5, y=0.5,
-                                showarrow=False
-                            )],
-                            showlegend=True,
-                            legend=dict(
-                                orientation="h",
-                                yanchor="top",
-                                y=-0.1,
-                                xanchor="center",
-                                x=0.5,
-                                font=dict(size=11)
-                            ),
-                            margin=dict(l=10, r=10, t=10, b=40),
-                            height=380,
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            font=dict(family="sans-serif")
-                        )
-                        st.plotly_chart(fig_donut, use_container_width=True)
-
-                    elif chart_style == "横棒グラフ":
-                        df_bar = df_cat.sort_values("金額", ascending=True)
-                        fig_hbar = px.bar(
-                            df_bar,
-                            x="金額",
-                            y="カテゴリー",
-                            orientation="h",
-                            text="金額",
-                            color="金額",
-                            color_continuous_scale="Purp"
-                        )
-                        fig_hbar.update_traces(
-                            texttemplate='¥%{text:,.0f}',
-                            textposition='outside',
-                            marker_line_width=0,
-                            opacity=0.85
-                        )
-                        fig_hbar.update_layout(
-                            margin=dict(l=10, r=20, t=10, b=10),
-                            height=380,
-                            xaxis_title=None,
-                            yaxis_title=None,
-                            coloraxis_showscale=False,
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            font=dict(family="sans-serif", size=12)
-                        )
-                        st.plotly_chart(fig_hbar, use_container_width=True)
-
-                    else:  # ツリーマップ
-                        fig_tree = px.treemap(
-                            df_cat,
-                            path=["カテゴリー"],
-                            values="金額",
-                            color="金額",
-                            color_continuous_scale="Teal"
-                        )
-                        fig_tree.update_traces(
-                            textinfo="label+value+percent root",
-                            texttemplate="<b>%{label}</b><br>¥%{value:,.0f}<br>%{percentRoot:.1%}"
-                        )
-                        fig_tree.update_layout(
-                            margin=dict(l=10, r=10, t=10, b=10),
-                            height=380,
-                            coloraxis_showscale=False,
-                            font=dict(family="sans-serif")
-                        )
-                        st.plotly_chart(fig_tree, use_container_width=True)
-                else:
-                    st.info("データがありません。")
-
-            st.write("---")
-            if cat_data:
-                st.markdown(f"##### 📑 {selected_month} カテゴリー別詳細")
-                df_cat_display = df_cat.copy()
-                df_cat_display["構成比"] = (df_cat_display["金額"] / df_cat_display["金額"].sum() * 100).map("{:.1f}%".format)
-                df_cat_display["金額 (税込)"] = df_cat_display["金額"].map("¥{:,}".format)
-                st.dataframe(
-                    df_cat_display[["カテゴリー", "金額 (税込)", "構成比"]],
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-            # --- AI家計簿診断エリア ---
-            st.write("---")
-            st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
-            st.caption("Geminiが現在の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
-
-            if st.button("✨ この月の支出をAIに診断してもらう", type="primary", use_container_width=True):
-                with st.spinner("AIが家計データを分析して改善策を考えています..."):
-                    try:
-                        summary_lines = [
-                            f"- 対象期間: {selected_month}",
-                            f"- 総支出額: ¥{total_cat_amt:,}"
-                        ]
-                        summary_lines.append("- カテゴリ別支出:")
-                        for _, r in df_cat.iterrows():
-                            pct = (r["金額"] / total_cat_amt * 100) if total_cat_amt > 0 else 0
-                            summary_lines.append(f"  * {r['カテゴリー']}: ¥{int(r['金額']):,} ({pct:.1f}%)")
-
-                        all_recs = get_all_receipts()
-                        if target_m:
-                            target_recs = [r for r in all_recs if str(r.get("date", ""))[:7] == target_m]
-                        else:
-                            target_recs = all_recs
-                        
-                        top_recs = sorted(target_recs, key=lambda x: int(x.get("total_amount", x.get("amount", 0))), reverse=True)[:3]
-                        if top_recs:
-                            summary_lines.append("- 主な高額レシートTOP3:")
-                            for tr in top_recs:
-                                amt_t = int(tr.get("total_amount", tr.get("amount", 0)))
-                                summary_lines.append(f"  * {tr.get('date')} {tr.get('store_name')}: ¥{amt_t:,} ({tr.get('category')})")
-
-                        summary_payload = "\n".join(summary_lines)
-
-                        advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
-                        st.session_state[f"advice_{selected_month}"] = advice
-                    except Exception as e:
-                        st.error(f"診断エラー: {e}")
-
-            if f"advice_{selected_month}" in st.session_state:
-                st.info(st.session_state[f"advice_{selected_month}"])
         else:
-            st.info("集計対象のデータがまだ登録されていません。")
+            # 通常のダッシュボード表示
+            summary_data = get_monthly_summary()
+
+            if summary_data:
+                cols = st.columns(min(len(summary_data), 4))
+                for idx, (month, total, sum_t8, sum_t10) in enumerate(summary_data[:4]):
+                    with cols[idx]:
+                        st.metric(
+                            label=f"📅 {month} 総支出",
+                            value=f"¥{total:,}",
+                            help=f"内訳: 8%税 ¥{sum_t8 or 0:,} / 10%税 ¥{sum_t10 or 0:,}"
+                        )
+
+                st.write("---")
+                col_chart_left, col_chart_right = st.columns([1.1, 0.9])
+
+                with col_chart_left:
+                    st.markdown("#### 📈 月別支出推移")
+                    df_monthly = pd.DataFrame(summary_data, columns=["月", "合計金額", "8%消費税", "10%消費税"])
+                    df_monthly_sorted = df_monthly.sort_values("月")
+
+                    fig_bar = px.bar(
+                        df_monthly_sorted,
+                        x="月",
+                        y="合計金額",
+                        text="合計金額",
+                        color="合計金額",
+                        color_continuous_scale="Tealgrn",
+                    )
+                    fig_bar.update_traces(
+                        texttemplate='¥%{text:,.0f}',
+                        textposition='outside',
+                        marker_line_width=0,
+                        opacity=0.85
+                    )
+                    fig_bar.update_layout(
+                        margin=dict(l=10, r=10, t=20, b=10),
+                        height=360,
+                        xaxis_title=None,
+                        yaxis_title=None,
+                        coloraxis_showscale=False,
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(family="sans-serif", size=12)
+                    )
+                    st.plotly_chart(fig_bar, use_container_width=True)
+
+                with col_chart_right:
+                    st.markdown("#### 📊 カテゴリー別内訳")
+                    c_sel1, c_sel2 = st.columns(2)
+                    with c_sel1:
+                        available_months = ["全期間"] + [row[0] for row in summary_data]
+                        selected_month = st.selectbox("表示月を選択", available_months, index=0, key="cat_month_select")
+                    with c_sel2:
+                        chart_style = st.selectbox("形式を選択", ["ドーナツ", "横棒グラフ", "ツリーマップ"], index=0, key="cat_chart_type")
+
+                    target_m = None if selected_month == "全期間" else selected_month
+                    cat_data = get_category_summary(target_m)
+
+                    if cat_data:
+                        df_cat = pd.DataFrame(cat_data, columns=["カテゴリー", "金額"])
+                        total_cat_amt = df_cat["金額"].sum()
+
+                        if chart_style == "ドーナツ":
+                            fig_donut = go.Figure(data=[go.Pie(
+                                labels=df_cat["カテゴリー"],
+                                values=df_cat["金額"],
+                                hole=0.60,
+                                textinfo="percent",
+                                textposition="inside",
+                                insidetextorientation="horizontal",
+                                hoverinfo="label+value+percent",
+                                hovertemplate="<b>%{label}</b><br>金額: ¥%{value:,.0f}<br>割合: %{percent}<extra></extra>",
+                                marker=dict(colors=px.colors.qualitative.Pastel)
+                            )])
+                            fig_donut.update_layout(
+                                annotations=[dict(
+                                    text=f"<span style='font-size:12px;color:#888;'>合計</span><br><b style='font-size:16px;'>¥{total_cat_amt:,}</b>",
+                                    x=0.5, y=0.5,
+                                    showarrow=False
+                               )],
+                                showlegend=True,
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="top",
+                                    y=-0.1,
+                                    xanchor="center",
+                                    x=0.5,
+                                    font=dict(size=11)
+                                ),
+                                margin=dict(l=10, r=10, t=10, b=40),
+                                height=380,
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                font=dict(family="sans-serif")
+                            )
+                            st.plotly_chart(fig_donut, use_container_width=True)
+
+                        elif chart_style == "横棒グラフ":
+                            df_bar = df_cat.sort_values("金額", ascending=True)
+                            fig_hbar = px.bar(
+                                df_bar,
+                                x="金額",
+                                y="カテゴリー",
+                                orientation="h",
+                                text="金額",
+                                color="金額",
+                                color_continuous_scale="Purp"
+                            )
+                            fig_hbar.update_traces(
+                                texttemplate='¥%{text:,.0f}',
+                                textposition='outside',
+                                marker_line_width=0,
+                                opacity=0.85
+                            )
+                            fig_hbar.update_layout(
+                                margin=dict(l=10, r=20, t=10, b=10),
+                                height=380,
+                                xaxis_title=None,
+                                yaxis_title=None,
+                                coloraxis_showscale=False,
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                font=dict(family="sans-serif", size=12)
+                            )
+                            st.plotly_chart(fig_hbar, use_container_width=True)
+
+                        else:  # ツリーマップ
+                            fig_tree = px.treemap(
+                                df_cat,
+                                path=["カテゴリー"],
+                                values="金額",
+                                color="金額",
+                                color_continuous_scale="Teal"
+                            )
+                            fig_tree.update_traces(
+                                textinfo="label+value+percent root",
+                                texttemplate="<b>%{label}</b><br>¥%{value:,.0f}<br>%{percentRoot:.1%}"
+                            )
+                            fig_tree.update_layout(
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                height=380,
+                                coloraxis_showscale=False,
+                                font=dict(family="sans-serif")
+                            )
+                            st.plotly_chart(fig_tree, use_container_width=True)
+                    else:
+                        st.info("データがありません。")
+
+                st.write("---")
+                # カテゴリー別詳細 & ワンタップジャンプボタン
+                if cat_data:
+                    st.markdown(f"##### 📑 {selected_month} カテゴリー別内訳（タップして履歴詳細を表示）")
+                    for row_idx, r in df_cat.iterrows():
+                        c_name = r["カテゴリー"]
+                        c_amt = int(r["金額"])
+                        pct_val = (c_amt / total_cat_amt * 100) if total_cat_amt > 0 else 0
+                        
+                        col_l, col_r = st.columns([3, 1])
+                        with col_l:
+                            st.markdown(f"**{c_name}**: ¥{c_amt:,} ({pct_val:.1f}%)")
+                        with col_r:
+                            if st.button(f"🔍 履歴を見る", key=f"jump_{c_name}_{row_idx}", use_container_width=True):
+                                st.session_state["drilldown_cat"] = c_name
+                                st.session_state["drilldown_month"] = selected_month
+                                st.rerun()
+
+                # --- AI家計簿診断エリア ---
+                st.write("---")
+                st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
+                st.caption("Geminiが現在の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
+
+                if st.button("✨ この月の支出をAIに診断してもらう", type="primary", use_container_width=True):
+                    with st.spinner("AIが家計データを分析して改善策を考えています..."):
+                        try:
+                            summary_lines = [
+                                f"- 対象期間: {selected_month}",
+                                f"- 総支出額: ¥{total_cat_amt:,}"
+                            ]
+                            summary_lines.append("- カテゴリ別支出:")
+                            for _, r in df_cat.iterrows():
+                                pct = (r["金額"] / total_cat_amt * 100) if total_cat_amt > 0 else 0
+                                summary_lines.append(f"  * {r['カテゴリー']}: ¥{int(r['金額']):,} ({pct:.1f}%)")
+
+                            all_recs = get_all_receipts()
+                            if target_m:
+                                target_recs = [r for r in all_recs if str(r.get("date", ""))[:7] == target_m]
+                            else:
+                                target_recs = all_recs
+                            
+                            top_recs = sorted(target_recs, key=lambda x: int(x.get("total_amount", x.get("amount", 0))), reverse=True)[:3]
+                            if top_recs:
+                                summary_lines.append("- 主な高額レシートTOP3:")
+                                for tr in top_recs:
+                                    amt_t = int(tr.get("total_amount", tr.get("amount", 0)))
+                                    summary_lines.append(f"  * {tr.get('date')} {tr.get('store_name')}: ¥{amt_t:,} ({tr.get('category')})")
+
+                            summary_payload = "\n".join(summary_lines)
+
+                            advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
+                            st.session_state[f"advice_{selected_month}"] = advice
+                        except Exception as e:
+                            st.error(f"診断エラー: {e}")
+
+                if f"advice_{selected_month}" in st.session_state:
+                    st.info(st.session_state[f"advice_{selected_month}"])
+            else:
+                st.info("集計対象のデータがまだ登録されていません。")
 
     # --- タブ3: 履歴検索・編集・削除 ---
     with tab3:
