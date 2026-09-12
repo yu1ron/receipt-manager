@@ -4,7 +4,14 @@ import io
 import json
 import os
 from PIL import Image, ImageOps
-import pillow_heif
+
+# pillow_heif の安全な読み込み
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pillow_heif = None
+
 import pytesseract
 import re
 import sqlite3
@@ -40,8 +47,6 @@ except ImportError:
     pd = None
     px = None
     go = None
-
-pillow_heif.register_heif_opener()
 
 # ==========================================
 # 0. 定数・カテゴリー定義
@@ -117,7 +122,6 @@ def infer_category_rule(store_name, items, default_category="その他"):
     items_text = " ".join(item_names).lower()
     store_text = str(store_name).lower()
 
-    # ステップ1: 明細キーワードを最優先
     daily_keywords = [
         "洗濯", "洗剤", "柔軟剤", "ソフター", "漂白剤", "アタック", "ボールド", "ナノックス",
         "シャンプー", "トリートメント", "リンス", "石鹸", "ソープ", "ボディ", "ハミガキ", "歯ブラシ",
@@ -139,11 +143,9 @@ def infer_category_rule(store_name, items, default_category="その他"):
     if any(k in items_text for k in hobby_keywords):
         return "娯楽・趣味・書籍"
 
-    # ステップ2: AI推論
     if default_category in CATEGORIES and default_category != "その他":
         return default_category
 
-    # ステップ3: 店舗名
     if any(k in store_text for k in ["ドラッグ", "薬局", "サンドラッグ", "コスモス", "マツキヨ", "ダイソー", "セリア", "キャンドゥ"]):
         return "日用品・消耗品"
     if any(k in store_text for k in ["マクドナルド", "すき家", "スタバ", "スターバックス", "カフェ", "居酒屋", "食堂", "ラーメン", "レストラン"]):
@@ -157,7 +159,6 @@ def infer_category_rule(store_name, items, default_category="その他"):
 
     return "その他"
 
-
 def analyze_expenses_with_gemini(summary_text, api_key):
     """Geminiに支出データを渡して改善アドバイスを生成"""
     if not api_key:
@@ -169,20 +170,20 @@ def analyze_expenses_with_gemini(summary_text, api_key):
     client = genai.Client(api_key=clean_key)
 
     prompt = f"""
-    あなたはプロのファイナンシャルプランナー（FP）兼、親しみやすい家計改善アドバイザーです。
-    以下の直近の支出集計データを分析し、ユーザーが実践しやすい具体的な改善提案を行ってください。
+あなたはプロのファイナンシャルプランナー（FP）兼、親しみやすい家計改善アドバイザーです。
+以下の直近の支出集計データを分析し、ユーザーが実践しやすい具体的な改善提案を行ってください。
 
-    【支出データ】
-    {summary_text}
+【支出データ】
+{summary_text}
 
-    【出力構成】
-    1. **家計の健全度診断** (100点満点での評価と全体の総評)
-    2. **気になった点・使いすぎの傾向** (どのカテゴリ・買い物が負担になっているか)
-    3. **具体的な節約・改善アクション 3選** (今日・今月からすぐ実践できる行動)
-    4. **アドバイザーからの一言エール**
+【出力構成】
+1. **家計の健全度診断** (100点満点での評価と全体の総評)
+2. **気になった点・使いすぎの傾向** (どのカテゴリ・買い物が負担になっているか)
+3. **具体的な節約・改善アクション 3選** (今日・今月からすぐ実践できる行動)
+4. **アドバイザーからの一言エール**
 
-    ※批判的にならず、前向きに楽しく節約できるトーンでアドバイスを作成してください。
-    """
+※批判的にならず、前向きに楽しく節約できるトーンでアドバイスを作成してください。
+"""
     response = client.models.generate_content(
         model="gemini-3.6-flash",
         contents=prompt
@@ -328,7 +329,6 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
     sp = get_supabase_client()
     if sp:
         try:
-            # 1回のリクエストで本体と明細(receipt_items)を一括JOIN取得
             query = sp.table("receipts").select("*, receipt_items(*)")
             if search_kw:
                 query = query.ilike("store_name", f"%{search_kw}%")
@@ -348,7 +348,6 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
                 elif "amount" in r and "total_amount" not in r:
                     r["total_amount"] = r["amount"]
 
-                # 一括取得した receipt_items を整形
                 raw_items = r.get("receipt_items", [])
                 r["items"] = [(it.get("item_name", ""), it.get("item_price", 0)) for it in raw_items]
             return receipts
@@ -356,7 +355,6 @@ def get_all_receipts(search_kw="", start_date=None, end_date=None, category=None
             st.error(f"Supabase取得エラー: {e}")
             return []
 
-    # SQLite フォールバック
     conn = sqlite3.connect("receipt_data.db")
     cursor = conn.cursor()
     sql = "SELECT id, date, store_name, total_amount, discount, points_used, category, tax_type, tax_8_amount, tax_8_tax, tax_10_amount, tax_10_tax FROM receipts WHERE 1=1"
@@ -469,7 +467,7 @@ def update_full_receipt(receipt_id, date, store_name, total_amount, discount, po
     return True
 
 def delete_receipt(receipt_id):
-    """レシートおよび紐づく明細を完全削除 (Supabase / SQLite 両対応)"""
+    """レシートおよび紐づく明細を完全削除"""
     r_id = int(receipt_id)
     sp = get_supabase_client()
     if sp:
@@ -507,7 +505,6 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
         file_bytes = uploaded_file.read()
         mime_type = "application/pdf"
     else:
-        # 画像を開いて処理後、確実にメモリから破棄する (OOMクラッシュ・再起動防止)
         with Image.open(uploaded_file) as raw_img:
             img = ImageOps.exif_transpose(raw_img)
             if img.mode != "RGB":
@@ -924,13 +921,12 @@ def main():
                     df_cat = pd.DataFrame(cat_data, columns=["カテゴリー", "金額"])
                     total_cat_amt = df_cat["金額"].sum()
 
-                    # スマホ対応: ドーナツグラフの最適化
                     fig_donut = go.Figure(data=[go.Pie(
                         labels=df_cat["カテゴリー"],
                         values=df_cat["金額"],
                         hole=0.60,
-                        textinfo="percent",              # 円グラフ内には%のみ表示で見切れ防止
-                        textposition="inside",           # 必ず円の内側に収める
+                        textinfo="percent",
+                        textposition="inside",
                         insidetextorientation="horizontal",
                         hoverinfo="label+value+percent",
                         hovertemplate="<b>%{label}</b><br>金額: ¥%{value:,.0f}<br>割合: %{percent}<extra></extra>",
@@ -943,16 +939,16 @@ def main():
                             x=0.5, y=0.5,
                             showarrow=False
                         )],
-                        showlegend=True,                 # 凡例を表示してカテゴリーを判別
+                        showlegend=True,
                         legend=dict(
-                            orientation="h",             # 横並びでスマホ下に配置
+                            orientation="h",
                             yanchor="top",
                             y=-0.1,
                             xanchor="center",
                             x=0.5,
                             font=dict(size=11)
                         ),
-                        margin=dict(l=10, r=10, t=10, b=40), # 凡例分の下余白を確保
+                        margin=dict(l=10, r=10, t=10, b=40),
                         height=380,
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
@@ -973,18 +969,15 @@ def main():
                     use_container_width=True,
                     hide_index=True
                 )
-        else:
-            st.info("集計対象のデータがまだ登録されていません。")
 
-        # --- AI家計簿診断エリア ---
+            # --- AI家計簿診断エリア (正常なインデント位置に配置) ---
             st.write("---")
             st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
             st.caption("Geminiが現在の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
 
-            if st.button("✨ この月の支出をAIに診断してもらう", type="primary"):
+            if st.button("✨ この月の支出をAIに診断してもらう", type="primary", use_container_width=True):
                 with st.spinner("AIが家計データを分析して改善策を考えています..."):
                     try:
-                        # 診断用サマリーテキストの組み立て
                         summary_lines = [
                             f"- 対象期間: {selected_month}",
                             f"- 総支出額: ¥{total_cat_amt:,}"
@@ -994,7 +987,6 @@ def main():
                             pct = (r["金額"] / total_cat_amt * 100) if total_cat_amt > 0 else 0
                             summary_lines.append(f"  * {r['カテゴリー']}: ¥{int(r['金額']):,} ({pct:.1f}%)")
 
-                        # 高額支出上位3件を抽出してコンテキストに追加
                         all_recs = get_all_receipts()
                         if target_m:
                             target_recs = [r for r in all_recs if str(r.get("date", ""))[:7] == target_m]
@@ -1010,15 +1002,15 @@ def main():
 
                         summary_payload = "\n".join(summary_lines)
 
-                        # Geminiで診断実行
                         advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
                         st.session_state[f"advice_{selected_month}"] = advice
                     except Exception as e:
                         st.error(f"診断エラー: {e}")
 
-            # 診断結果の表示
             if f"advice_{selected_month}" in st.session_state:
                 st.info(st.session_state[f"advice_{selected_month}"])
+        else:
+            st.info("集計対象のデータがまだ登録されていません。")
 
     # --- タブ3: 履歴検索・編集・削除 ---
     with tab3:
@@ -1043,7 +1035,6 @@ def main():
             st.caption(f"検索結果: **{len(records)} 件** 見つかりました（合計支出: **¥{hit_sum:,}**）")
 
         if records:
-            # --- 並び替え（ソート）処理 ---
             if sort_order == "登録が新しい順":
                 records = sorted(records, key=lambda x: int(x["id"]), reverse=True)
             elif sort_order == "登録が古い順":
@@ -1122,7 +1113,6 @@ def main():
                             time.sleep(0.5)
                             st.rerun()
 
-                    # フォーム外で削除モーダルを呼び出す
                     if submit_delete_trigger:
                         confirm_delete_dialog(r_id, rec.get("store_name", "店舗"), amt_val)
         else:
