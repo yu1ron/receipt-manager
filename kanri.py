@@ -157,6 +157,38 @@ def infer_category_rule(store_name, items, default_category="その他"):
 
     return "その他"
 
+
+def analyze_expenses_with_gemini(summary_text, api_key):
+    """Geminiに支出データを渡して改善アドバイスを生成"""
+    if not api_key:
+        raise ValueError("Gemini APIキーが未設定です。")
+    if genai is None:
+        raise ImportError("google-genai パッケージが未導入です。")
+
+    clean_key = "".join(c for c in api_key.strip() if 32 <= ord(c) <= 126)
+    client = genai.Client(api_key=clean_key)
+
+    prompt = f"""
+    あなたはプロのファイナンシャルプランナー（FP）兼、親しみやすい家計改善アドバイザーです。
+    以下の直近の支出集計データを分析し、ユーザーが実践しやすい具体的な改善提案を行ってください。
+
+    【支出データ】
+    {summary_text}
+
+    【出力構成】
+    1. **家計の健全度診断** (100点満点での評価と全体の総評)
+    2. **気になった点・使いすぎの傾向** (どのカテゴリ・買い物が負担になっているか)
+    3. **具体的な節約・改善アクション 3選** (今日・今月からすぐ実践できる行動)
+    4. **アドバイザーからの一言エール**
+
+    ※批判的にならず、前向きに楽しく節約できるトーンでアドバイスを作成してください。
+    """
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=prompt
+    )
+    return response.text
+
 # ==========================================
 # 1. 秘密情報 (secrets.toml) の書き込み・保存
 # ==========================================
@@ -943,6 +975,50 @@ def main():
                 )
         else:
             st.info("集計対象のデータがまだ登録されていません。")
+
+        # --- AI家計簿診断エリア ---
+            st.write("---")
+            st.markdown("#### 🤖 AI家計診断・支出改善アドバイス")
+            st.caption("Geminiが現在の支出傾向を分析し、ムダの削減ポイントや節約アイデアを提案します。")
+
+            if st.button("✨ この月の支出をAIに診断してもらう", type="primary"):
+                with st.spinner("AIが家計データを分析して改善策を考えています..."):
+                    try:
+                        # 診断用サマリーテキストの組み立て
+                        summary_lines = [
+                            f"- 対象期間: {selected_month}",
+                            f"- 総支出額: ¥{total_cat_amt:,}"
+                        ]
+                        summary_lines.append("- カテゴリ別支出:")
+                        for _, r in df_cat.iterrows():
+                            pct = (r["金額"] / total_cat_amt * 100) if total_cat_amt > 0 else 0
+                            summary_lines.append(f"  * {r['カテゴリー']}: ¥{int(r['金額']):,} ({pct:.1f}%)")
+
+                        # 高額支出上位3件を抽出してコンテキストに追加
+                        all_recs = get_all_receipts()
+                        if target_m:
+                            target_recs = [r for r in all_recs if str(r.get("date", ""))[:7] == target_m]
+                        else:
+                            target_recs = all_recs
+                        
+                        top_recs = sorted(target_recs, key=lambda x: int(x.get("total_amount", x.get("amount", 0))), reverse=True)[:3]
+                        if top_recs:
+                            summary_lines.append("- 主な高額レシートTOP3:")
+                            for tr in top_recs:
+                                amt_t = int(tr.get("total_amount", tr.get("amount", 0)))
+                                summary_lines.append(f"  * {tr.get('date')} {tr.get('store_name')}: ¥{amt_t:,} ({tr.get('category')})")
+
+                        summary_payload = "\n".join(summary_lines)
+
+                        # Geminiで診断実行
+                        advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
+                        st.session_state[f"advice_{selected_month}"] = advice
+                    except Exception as e:
+                        st.error(f"診断エラー: {e}")
+
+            # 診断結果の表示
+            if f"advice_{selected_month}" in st.session_state:
+                st.info(st.session_state[f"advice_{selected_month}"])
 
     # --- タブ3: 履歴検索・編集・削除 ---
     with tab3:
