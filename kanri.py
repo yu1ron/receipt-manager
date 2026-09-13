@@ -13,6 +13,70 @@ import time
 # Streamlit 初期設定（最上部で実行）
 st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
 
+# ==========================================
+# ローディング画面・中央走行アニメーション CSS
+# ==========================================
+st.markdown("""
+<style>
+/* 処理中 (running) に画面全体を薄暗く/半透明化し、中央で走らせるスタイル */
+div[data-testid="stStatusWidget"] {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: rgba(255, 255, 255, 0.65) !important;
+    backdrop-filter: blur(3px) !important;
+    z-index: 999999 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: center !important;
+    pointer-events: auto !important;
+}
+
+@media (prefers-color-scheme: dark) {
+    div[data-testid="stStatusWidget"] {
+        background: rgba(15, 15, 15, 0.7) !important;
+    }
+}
+
+/* 走る/泳ぐマーク自体のサイズ拡大と中央配置 */
+div[data-testid="stStatusWidget"] svg,
+div[data-testid="stStatusWidget"] img,
+div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] {
+    width: 64px !important;
+    height: 64px !important;
+    transform-origin: center center !important;
+    animation: runAcross 1.8s ease-in-out infinite alternate !important;
+}
+
+/* 処理状況のテキストも中央下部に綺麗に整列 */
+div[data-testid="stStatusWidget"] button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 16px !important;
+    font-weight: bold !important;
+    color: #1f77b4 !important;
+    margin-top: 12px !important;
+}
+
+/* 左から右へ走っていくアニメーション */
+@keyframes runAcross {
+    0% {
+        transform: translateX(-120px) scale(1);
+    }
+    50% {
+        transform: translateX(0px) scale(1.15);
+    }
+    100% {
+        transform: translateX(120px) scale(1);
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
 # pillow_heif の安全な読み込み
 try:
     import pillow_heif
@@ -1238,7 +1302,6 @@ def main():
                             advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
                             st.session_state[f"advice_{active_m}"] = advice
                             
-                            # 最適化されたダイアログを表示
                             show_advice_dialog(active_m, advice)
                         except Exception as e:
                             st.error(f"診断エラー: {e}")
