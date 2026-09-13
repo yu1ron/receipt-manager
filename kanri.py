@@ -255,6 +255,22 @@ def generate_receipts_csv(records):
             
     return output.getvalue().encode("utf-8-sig")
 
+def check_duplicate_receipt(date, store_name, total_amount, exclude_id=None):
+    """同一日付・同一店舗・同一金額のレシートが既存DBに存在するかチェック"""
+    all_recs = get_all_receipts()
+    for r in all_recs:
+        if exclude_id and r.get("id") == exclude_id:
+            continue
+        r_date = str(r.get("date", "")).strip().replace("-", "/")
+        t_date = str(date).strip().replace("-", "/")
+        r_store = str(r.get("store_name", "")).strip().lower()
+        t_store = str(store_name).strip().lower()
+        r_amt = int(r.get("total_amount", r.get("amount", 0)))
+        
+        if r_date == t_date and r_store == t_store and r_amt == int(total_amount):
+            return r
+    return None
+
 # ==========================================
 # 1. 秘密情報 (secrets.toml) の書き込み・保存
 # ==========================================
@@ -929,6 +945,12 @@ def main():
 
             for idx, (sig, pdata) in enumerate(list(st.session_state["batch_parsed_data"].items())):
                 with st.expander(f"📄 [{idx+1}] {pdata['file_name']} - 【{pdata['store_name'] or '店舗'}】 ¥{pdata['total_amount']:,}", expanded=True):
+                    
+                    # 登録前の重複チェック警告
+                    dup_rec = check_duplicate_receipt(pdata["date"], pdata["store_name"], pdata["total_amount"])
+                    if dup_rec:
+                        st.warning(f"⚠️ **重複の可能性**: 同一の日付・店舗・金額（¥{pdata['total_amount']:,}）のデータが既に登録されています（ID: {dup_rec['id']}）。二重登録にご注意ください。")
+
                     c1, c2, c3 = st.columns([3, 2, 2])
                     with c1:
                         val_store = st.text_input("店舗名", value=pdata["store_name"], key=f"b_store_{sig}")
@@ -1287,6 +1309,28 @@ def main():
     with tab3:
         st.subheader("🔍 データ履歴の検索・編集・削除")
         
+        # 履歴全体の重複チェック＆上部アラート表示
+        all_stored_records = get_all_receipts()
+        seen_keys = {}
+        detected_duplicates = []
+        for r in all_stored_records:
+            k = (
+                str(r.get("date", "")).strip().replace("-", "/"),
+                str(r.get("store_name", "")).strip().lower(),
+                int(r.get("total_amount", r.get("amount", 0)))
+            )
+            if k in seen_keys:
+                detected_duplicates.append((seen_keys[k], r))
+            else:
+                seen_keys[k] = r
+
+        if detected_duplicates:
+            with st.expander(f"⚠️ 【確認】重複の疑いがあるデータが {len(detected_duplicates)} 組見つかりました", expanded=True):
+                st.caption("同じ日付・同じ店舗・同じ合計金額のレシートです。二重登録されている場合は、下の一覧から不要な方を削除してください。")
+                for orig, dup in detected_duplicates:
+                    amt_d = int(dup.get("total_amount", dup.get("amount", 0)))
+                    st.markdown(f"- **ID {orig['id']}** と **ID {dup['id']}**: {dup['date']} 【{dup['store_name']}】 **¥{amt_d:,}**")
+
         c_filter1, c_filter2, c_filter3 = st.columns([3, 2, 2])
         with c_filter1:
             search_kw = st.text_input("🔍 キーワード検索 (店舗名、カテゴリー、日付)", placeholder="例: Amazon, 食費, 2026/08")
