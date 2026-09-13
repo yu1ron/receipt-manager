@@ -1067,12 +1067,19 @@ def main():
                 with col_chart_right:
                     st.markdown(f"#### 📊 カテゴリー別内訳 ({active_m})")
                     
+                    chart_styles = ["ドーナツ", "横棒グラフ", "ツリーマップ"]
+                    # セッションに保存されたグラフ形式を取得（なければ初期値ドーナツ）
+                    cur_chart_style = st.session_state.get("active_chart_style", "ドーナツ")
+                    cur_chart_idx = chart_styles.index(cur_chart_style) if cur_chart_style in chart_styles else 0
+                    
+                    # グラフ形式選択（選択結果をセッションに永続保存）
                     chart_style = st.selectbox(
                         "形式を選択", 
-                        ["ドーナツ", "横棒グラフ", "ツリーマップ"], 
-                        index=0, 
+                        chart_styles, 
+                        index=cur_chart_idx, 
                         key="cat_chart_type"
                     )
+                    st.session_state["active_chart_style"] = chart_style
 
                     cat_data = get_category_summary(month_str=active_m)
 
@@ -1171,7 +1178,6 @@ def main():
                 # カテゴリー別詳細（4項目分のみ表示・内部スクロールコンテナ化）
                 if cat_data:
                     st.markdown(f"##### 📑 {active_m} カテゴリー別内訳（スクロール可能・タップして履歴表示）")
-                    # 4項目相当の高さ(240px)で固定し、枠内スクロールを有効化
                     with st.container(height=240):
                         for row_idx, r in df_cat.iterrows():
                             c_name = r["カテゴリー"]
