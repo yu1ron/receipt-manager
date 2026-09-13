@@ -1083,7 +1083,7 @@ def main():
                 st.markdown(f"### 📂 【{d_cat}】の内訳一覧 ({d_m})")
 
             all_recs = get_all_receipts()
-            filtered_drill = [r for r in all_recs if r.get["category"] == d_cat]
+            filtered_drill = [r for r in all_recs if r.get("category") == d_cat]
             if d_m != "全期間":
                 filtered_drill = [r for r in filtered_drill if str(r.get("date", ""))[:7] == d_m]
 
