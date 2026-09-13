@@ -13,63 +13,6 @@ import time
 # Streamlit 初期設定（最上部で実行）
 st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
 
-# ==========================================
-# ローディング画面（画面中央の円形スピナースタイル）
-# ==========================================
-st.markdown("""
-<style>
-/* 処理中オーバーレイ：画面全体を薄いすりガラスにして中央揃え */
-div[data-testid="stStatusWidget"] {
-    position: fixed !important;
-    top: 0 !important;
-    left: 0 !important;
-    width: 100vw !important;
-    height: 100vh !important;
-    background: rgba(0, 0, 0, 0.25) !important;
-    backdrop-filter: blur(3px) !important;
-    z-index: 999999 !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    align-items: center !important;
-    pointer-events: none !important;
-}
-
-/* ストップボタンや不要な上部バーの崩れを非表示 */
-div[data-testid="stStatusWidget"] button,
-div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] svg {
-    display: none !important;
-}
-
-/* 中央に表示する円形スピナー（⭕️） */
-div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] {
-    width: 48px !important;
-    height: 48px !important;
-    border: 4px solid rgba(255, 255, 255, 0.3) !important;
-    border-top: 4px solid #ffffff !important;
-    border-radius: 50% !important;
-    animation: iosSpin 0.9s linear infinite !important;
-    background: transparent !important;
-    margin-bottom: 8px !important;
-}
-
-/* ローディング中テキスト（読み込み中...）のスタイル */
-div[data-testid="stStatusWidget"] div {
-    color: #ffffff !important;
-    font-size: 14px !important;
-    font-weight: 600 !important;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5) !important;
-    letter-spacing: 0.05em !important;
-}
-
-/* 円形スピンアニメーション */
-@keyframes iosSpin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-</style>
-""", unsafe_allow_html=True)
-
 # pillow_heif の安全な読み込み
 try:
     import pillow_heif
