@@ -956,6 +956,10 @@ def main():
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
+        # グラフ形式の初期化（未設定時のみ「ドーナツ」をセット）
+        if "cat_chart_type" not in st.session_state:
+            st.session_state["cat_chart_type"] = "ドーナツ"
+
         # ドリルダウン表示
         if st.session_state.get("drilldown_cat"):
             d_cat = st.session_state["drilldown_cat"]
@@ -1068,18 +1072,13 @@ def main():
                     st.markdown(f"#### 📊 カテゴリー別内訳 ({active_m})")
                     
                     chart_styles = ["ドーナツ", "横棒グラフ", "ツリーマップ"]
-                    # セッションに保存されたグラフ形式を取得（なければ初期値ドーナツ）
-                    cur_chart_style = st.session_state.get("active_chart_style", "ドーナツ")
-                    cur_chart_idx = chart_styles.index(cur_chart_style) if cur_chart_style in chart_styles else 0
                     
-                    # グラフ形式選択（選択結果をセッションに永続保存）
+                    # 単一キーで Streamlit に完全管理させる（二重代入を撤廃して即時反映・安定化）
                     chart_style = st.selectbox(
                         "形式を選択", 
                         chart_styles, 
-                        index=cur_chart_idx, 
                         key="cat_chart_type"
                     )
-                    st.session_state["active_chart_style"] = chart_style
 
                     cat_data = get_category_summary(month_str=active_m)
 
@@ -1175,7 +1174,7 @@ def main():
                         st.info(f"{active_m} のデータがありません。")
 
                 st.write("---")
-                # カテゴリー別詳細（4項目分のみ表示・内部スクロールコンテナ化）
+                # カテゴリー別詳細（4項目分固定・内部スクロールコンテナ）
                 if cat_data:
                     st.markdown(f"##### 📑 {active_m} カテゴリー別内訳（スクロール可能・タップして履歴表示）")
                     with st.container(height=240):
