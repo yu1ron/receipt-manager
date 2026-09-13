@@ -691,7 +691,7 @@ def parse_with_tesseract(uploaded_file):
     }
 
 # ==========================================
-# 4. Streamlit UI (ダイアログ・ポップアップ)
+# 4. Streamlit UI (ダイアログ・高速ポップアップ)
 # ==========================================
 @st.dialog("⚠️ 削除の確認")
 def confirm_delete_dialog(receipt_id, store_name, total_amount):
@@ -712,8 +712,12 @@ def confirm_delete_dialog(receipt_id, store_name, total_amount):
 @st.dialog("🤖 AI家計診断・支出改善アドバイス")
 def show_advice_dialog(target_period, advice_content):
     st.caption(f"対象期間: **{target_period}** の支出傾向を分析した改善提案です。")
-    st.markdown(advice_content)
-    st.write("---")
+    
+    # チャンク描画遅延を防ぐため、1つのコンテナにラップして一括高速レンダリング
+    with st.container(height=360):
+        st.markdown(advice_content)
+        
+    st.write("")
     if st.button("閉じる", type="primary", use_container_width=True):
         st.rerun()
 
@@ -956,7 +960,6 @@ def main():
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
-        # 画面外に出ても破棄されない永続キーを初期化
         if "saved_chart_type" not in st.session_state:
             st.session_state["saved_chart_type"] = "ドーナツ"
 
@@ -1072,13 +1075,10 @@ def main():
                     st.markdown(f"#### 📊 カテゴリー別内訳 ({active_m})")
                     
                     chart_styles = ["ドーナツ", "横棒グラフ", "ツリーマップ"]
-                    
-                    # 永続キーから直前の選択位置を特定
                     saved_style = st.session_state.get("saved_chart_type", "ドーナツ")
                     default_idx = chart_styles.index(saved_style) if saved_style in chart_styles else 0
 
                     def on_chart_type_change():
-                        # ウィジェットの値を永続キーへ退避
                         st.session_state["saved_chart_type"] = st.session_state["cat_chart_selector"]
 
                     chart_style = st.selectbox(
@@ -1238,6 +1238,7 @@ def main():
                             advice = analyze_expenses_with_gemini(summary_payload, gemini_api_key)
                             st.session_state[f"advice_{active_m}"] = advice
                             
+                            # 最適化されたダイアログを表示
                             show_advice_dialog(active_m, advice)
                         except Exception as e:
                             st.error(f"診断エラー: {e}")
