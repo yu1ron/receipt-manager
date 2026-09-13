@@ -14,111 +14,58 @@ import time
 st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
 
 # ==========================================
-# ローディング画面・プログレス進行アニメーション CSS
+# ローディング画面（画面中央の円形スピナースタイル）
 # ==========================================
 st.markdown("""
 <style>
-/* 処理中 (running) の全画面オーバーレイ */
-/* pointer-events: none によりタップ判定を一切ブロックしないよう修正 */
+/* 処理中オーバーレイ：画面全体を薄いすりガラスにして中央揃え */
 div[data-testid="stStatusWidget"] {
     position: fixed !important;
     top: 0 !important;
     left: 0 !important;
     width: 100vw !important;
     height: 100vh !important;
-    background: rgba(255, 255, 255, 0.6) !important;
-    backdrop-filter: blur(2px) !important;
+    background: rgba(0, 0, 0, 0.25) !important;
+    backdrop-filter: blur(3px) !important;
     z-index: 999999 !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
     align-items: center !important;
-    pointer-events: none !important; /* スマホのタップを妨害しない */
+    pointer-events: none !important;
 }
 
-@media (prefers-color-scheme: dark) {
-    div[data-testid="stStatusWidget"] {
-        background: rgba(15, 15, 15, 0.7) !important;
-    }
+/* ストップボタンや不要な上部バーの崩れを非表示 */
+div[data-testid="stStatusWidget"] button,
+div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] svg {
+    display: none !important;
 }
 
-/* ストップボタンだけは確実にタップできるようにする */
-div[data-testid="stStatusWidget"] button {
-    position: absolute !important;
-    top: 20px !important;
-    right: 20px !important;
-    background: rgba(230, 230, 230, 0.95) !important;
-    border: 1px solid #ccc !important;
-    border-radius: 20px !important;
-    padding: 6px 14px !important;
-    font-size: 13px !important;
-    font-weight: 500 !important;
-    color: #444 !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.15) !important;
-    cursor: pointer !important;
-    z-index: 1000000 !important;
-    pointer-events: auto !important; /* ボタン単体はタップ可能 */
-}
-
-@media (prefers-color-scheme: dark) {
-    div[data-testid="stStatusWidget"] button {
-        background: rgba(45, 45, 45, 0.95) !important;
-        border: 1px solid #666 !important;
-        color: #eee !important;
-    }
-}
-
-/* 中央配置する進行バー（レーン）のラッパー */
+/* 中央に表示する円形スピナー（⭕️） */
 div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] {
-    position: relative !important;
-    width: 260px !important;
-    height: 50px !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: flex-start !important;
-    overflow: hidden !important;
-    pointer-events: none !important;
+    width: 48px !important;
+    height: 48px !important;
+    border: 4px solid rgba(255, 255, 255, 0.3) !important;
+    border-top: 4px solid #ffffff !important;
+    border-radius: 50% !important;
+    animation: iosSpin 0.9s linear infinite !important;
+    background: transparent !important;
+    margin-bottom: 8px !important;
 }
 
-/* アイコン本体を左から右へスムーズに走行させる */
-div[data-testid="stStatusWidget"] svg,
-div[data-testid="stStatusWidget"] img {
-    width: 44px !important;
-    height: 44px !important;
-    position: absolute !important;
-    left: 0 !important;
-    animation: progressRun 1.8s cubic-bezier(0.3, 0, 0.7, 1) infinite !important;
-    pointer-events: none !important;
-}
-
-/* 処理状況テキストの調整 */
+/* ローディング中テキスト（読み込み中...）のスタイル */
 div[data-testid="stStatusWidget"] div {
-    font-size: 15px !important;
-    font-weight: bold !important;
-    color: #1f77b4 !important;
-    margin-top: 10px !important;
-    pointer-events: none !important;
+    color: #ffffff !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5) !important;
+    letter-spacing: 0.05em !important;
 }
 
-@keyframes progressRun {
-    0% {
-        left: -40px;
-        opacity: 0;
-        transform: scale(0.9);
-    }
-    20% {
-        opacity: 1;
-        transform: scale(1.05);
-    }
-    80% {
-        opacity: 1;
-        transform: scale(1.05);
-    }
-    100% {
-        left: 260px;
-        opacity: 0;
-        transform: scale(0.9);
-    }
+/* 円形スピンアニメーション */
+@keyframes iosSpin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 </style>
 """, unsafe_allow_html=True)
