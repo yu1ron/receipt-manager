@@ -800,7 +800,7 @@ def main():
 
         engine_choice = st.radio(
             "解析エンジンを選択",
-            ["Gemini API (推奨)", "ChatGPT (OpenAI)", "Tesseract OCR (ローカル)"],
+            ["Gemini API (推奨)", "ChatGPT (OpenAI)"],
             index=0
         )
         
