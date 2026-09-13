@@ -956,9 +956,9 @@ def main():
     with tab2:
         st.subheader("📊 支出ダッシュボード")
 
-        # グラフ形式の初期化（未設定時のみ「ドーナツ」をセット）
-        if "cat_chart_type" not in st.session_state:
-            st.session_state["cat_chart_type"] = "ドーナツ"
+        # 画面外に出ても破棄されない永続キーを初期化
+        if "saved_chart_type" not in st.session_state:
+            st.session_state["saved_chart_type"] = "ドーナツ"
 
         # ドリルダウン表示
         if st.session_state.get("drilldown_cat"):
@@ -1073,11 +1073,20 @@ def main():
                     
                     chart_styles = ["ドーナツ", "横棒グラフ", "ツリーマップ"]
                     
-                    # 単一キーで Streamlit に完全管理させる（二重代入を撤廃して即時反映・安定化）
+                    # 永続キーから直前の選択位置を特定
+                    saved_style = st.session_state.get("saved_chart_type", "ドーナツ")
+                    default_idx = chart_styles.index(saved_style) if saved_style in chart_styles else 0
+
+                    def on_chart_type_change():
+                        # ウィジェットの値を永続キーへ退避
+                        st.session_state["saved_chart_type"] = st.session_state["cat_chart_selector"]
+
                     chart_style = st.selectbox(
                         "形式を選択", 
                         chart_styles, 
-                        key="cat_chart_type"
+                        index=default_idx,
+                        key="cat_chart_selector",
+                        on_change=on_chart_type_change
                     )
 
                     cat_data = get_category_summary(month_str=active_m)
