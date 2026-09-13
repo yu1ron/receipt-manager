@@ -1,4 +1,5 @@
 import base64
+import csv
 from datetime import datetime
 import io
 import json
@@ -7,7 +8,6 @@ from PIL import Image, ImageOps
 import re
 import sqlite3
 import streamlit as st
-import tempfile
 import time
 
 # Streamlit 初期設定（最上部で実行）
@@ -19,8 +19,6 @@ try:
     pillow_heif.register_heif_opener()
 except ImportError:
     pillow_heif = None
-
-import pytesseract
 
 # Supabase SDK
 try:
@@ -221,8 +219,44 @@ def analyze_expenses_with_gemini(summary_text, api_keys_input):
     if last_err:
         raise last_err
 
+def generate_receipts_csv(records):
+    """登録済みレシートおよび明細データをCSVに変換（Excel文字化け防止BOM付き）"""
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    
+    writer.writerow([
+        "レシートID", "利用日付", "店舗名", "カテゴリー", 
+        "合計金額(税込)", "値引き", "利用ポイント", 
+        "税区分", "8%税額", "10%税額", 
+        "商品名", "商品価格"
+    ])
+    
+    for r in records:
+        r_id = r.get("id", "")
+        date = r.get("date", "")
+        store = r.get("store_name", "")
+        cat = r.get("category", "")
+        total = r.get("total_amount", r.get("amount", 0))
+        disc = r.get("discount", 0)
+        pts = r.get("points_used", 0)
+        t_type = r.get("tax_type", "外税")
+        t8 = r.get("tax_8_tax", 0)
+        t10 = r.get("tax_10_tax", 0)
+        
+        items = r.get("items", [])
+        if items:
+            for item in items:
+                it_name = item[0] if isinstance(item, (list, tuple)) else item.get("name", item.get("item_name", ""))
+                it_price = item[1] if isinstance(item, (list, tuple)) else item.get("price", item.get("item_price", 0))
+                writer.writerow([r_id, date, store, cat, total, disc, pts, t_type, t8, t10, it_name, it_price])
+        else:
+            writer.writerow([r_id, date, store, cat, total, disc, pts, t_type, t8, t10, "", ""])
+            
+    return output.getvalue().encode("utf-8-sig")
+
 # ==========================================
-# 1. 秘密情報 (secrets.toml) の書き込み・保存 (クラウド安全化)
+# 1. 秘密情報 (secrets.toml) の書き込み・保存
 # ==========================================
 def save_api_key_to_secrets(key_name, key_value):
     if not key_value:
@@ -244,7 +278,6 @@ def save_api_key_to_secrets(key_name, key_value):
             for k, v in current_secrets.items():
                 f.write(f'{k} = "{v}"\n')
     except OSError:
-        # Streamlit Cloud 上のファイル書込不可エラーを安全に無視
         pass
 
 # ==========================================
@@ -518,7 +551,7 @@ def delete_receipt(receipt_id):
     return True
 
 # ==========================================
-# 3. 解析エンジン処理 (複数キー・自動切替対応)
+# 3. 解析エンジン処理 (複数キー自動切替)
 # ==========================================
 def parse_with_gemini(uploaded_file, api_keys_input, max_retries_per_key=2):
     if not api_keys_input:
@@ -699,62 +732,8 @@ def parse_with_openai(uploaded_file, api_key, max_retries=3):
                 continue
             raise e
 
-def parse_with_tesseract(uploaded_file):
-    uploaded_file.seek(0)
-    raw_img = Image.open(uploaded_file)
-    img = ImageOps.exif_transpose(raw_img)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
-        temp_path = temp_file.name
-        img.save(temp_path, format="PNG")
-
-    try:
-        text = pytesseract.image_to_string(temp_path, lang="jpn", config=r'--oem 3 --psm 6')
-    except Exception:
-        text = pytesseract.image_to_string(temp_path, lang="jpn")
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-
-    date_match = re.search(r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})", text)
-    date = f"{date_match.group(1)}/{int(date_match.group(2)):02d}/{int(date_match.group(3)):02d}" if date_match else datetime.now().strftime("%Y/%m/%d")
-
-    total_amount = 0
-    total_matches = re.findall(r"(?:^|\n)[^\n]*?合計[\s\\/¥]*([0-9,\s]+)", text)
-    for m in total_matches:
-        digits = re.sub(r"[^\d]", "", m)
-        if digits.isdigit() and int(digits) > 100:
-            total_amount = int(digits)
-
-    items = []
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    started = False
-    for line in lines:
-        if re.search(r"領収|スナック|助六|★|\*", line):
-            started = True
-        if not started:
-            continue
-        if re.search(r"小計|点\s*\d|内税|外税|税合計|プリカ|残高|支払|ポイント|軽減税率", line):
-            break
-        if re.search(r"電話|受付|相談|番号|※|＊|===|---|___|店|TEL|消費税", line):
-            continue
-        price_match = re.search(r"[¥\\/\s]*(\d{1,5})\s*円?$", line)
-        if price_match:
-            price = int(price_match.group(1))
-            name = re.sub(r"^[|!Il王*★・\s\d>]+|[|!Il*★・\s\d>]+$", "", line[:price_match.start()]).strip()
-            if len(name) >= 2 and 1 <= price <= 50000:
-                items.append({"name": name, "price": price})
-
-    return {
-        "store_name": "店舗", "date": date, "total_amount": total_amount, "discount": 0, "points_used": 0,
-        "category": "食費 (食材・自炊)", "tax_info": {"tax_type": "外税", "tax_8_amount": 0, "tax_8_tax": 0, "tax_10_amount": 0, "tax_10_tax": 0},
-        "items": items
-    }
-
 # ==========================================
-# 4. Streamlit UI (ダイアログ・高速ポップアップ)
+# 4. Streamlit UI (ダイアログ)
 # ==========================================
 @st.dialog("⚠️ 削除の確認")
 def confirm_delete_dialog(receipt_id, store_name, total_amount):
@@ -887,10 +866,8 @@ def main():
                             with st.spinner(f"「{up_file.name}」を解析中..."):
                                 if engine_choice == "Gemini API (推奨)":
                                     res = parse_with_gemini(up_file, gemini_api_key)
-                                elif engine_choice == "ChatGPT (OpenAI)":
-                                    res = parse_with_openai(up_file, openai_api_key)
                                 else:
-                                    res = parse_with_tesseract(up_file)
+                                    res = parse_with_openai(up_file, openai_api_key)
                                 
                                 st_name = res.get("store_name", "")
                                 raw_cat = res.get("category", "その他")
@@ -1306,7 +1283,7 @@ def main():
             else:
                 st.info("集計対象のデータがまだ登録されていません。")
 
-    # --- タブ3: 履歴検索・編集・削除 ---
+    # --- タブ3: 履歴検索・編集・削除・CSV出力 ---
     with tab3:
         st.subheader("🔍 データ履歴の検索・編集・削除")
         
@@ -1324,11 +1301,22 @@ def main():
 
         records = get_all_receipts(search_kw=search_kw, category=cat_filter)
 
-        if search_kw.strip() and records:
-            hit_sum = sum(int(r.get("total_amount", r.get("amount", 0))) for r in records)
-            st.caption(f"検索結果: **{len(records)} 件** 見つかりました（合計支出: **¥{hit_sum:,}**）")
-
         if records:
+            hit_sum = sum(int(r.get("total_amount", r.get("amount", 0))) for r in records)
+            
+            c_info, c_csv = st.columns([2.5, 1.5])
+            with c_info:
+                st.caption(f"対象データ: **{len(records)} 件**（合計支出: **¥{hit_sum:,}**）")
+            with c_csv:
+                csv_bytes = generate_receipts_csv(records)
+                st.download_button(
+                    label="📥 表示中データをCSV出力",
+                    data=csv_bytes,
+                    file_name=f"kakeibo_receipts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
             if sort_order == "登録が新しい順":
                 records = sorted(records, key=lambda x: int(x["id"]), reverse=True)
             elif sort_order == "登録が古い順":
