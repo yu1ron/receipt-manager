@@ -25,10 +25,11 @@ div[data-testid="stStatusWidget"] {
     left: 0 !important;
     width: 100vw !important;
     height: 100vh !important;
-    background: rgba(255, 255, 255, 0.72) !important;
+    background: rgba(255, 255, 255, 0.75) !important;
     backdrop-filter: blur(4px) !important;
     z-index: 999999 !important;
     display: flex !important;
+    flex-direction: column !important;
     justify-content: center !important;
     align-items: center !important;
     pointer-events: auto !important;
@@ -36,74 +37,83 @@ div[data-testid="stStatusWidget"] {
 
 @media (prefers-color-scheme: dark) {
     div[data-testid="stStatusWidget"] {
-        background: rgba(15, 15, 15, 0.75) !important;
+        background: rgba(15, 15, 15, 0.8) !important;
     }
 }
 
-/* ストップボタンは中央から外し、画面右上の端に固定配置 */
+/* ストップボタンを画面の右上端に確実に固定 */
 div[data-testid="stStatusWidget"] button {
     position: absolute !important;
     top: 20px !important;
-    right: 24px !important;
-    background: rgba(230, 230, 230, 0.8) !important;
+    right: 20px !important;
+    background: rgba(230, 230, 230, 0.9) !important;
     border: 1px solid #ccc !important;
     border-radius: 20px !important;
     padding: 6px 14px !important;
     font-size: 13px !important;
     font-weight: 500 !important;
     color: #444 !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1) !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15) !important;
     cursor: pointer !important;
     z-index: 1000000 !important;
 }
 
 @media (prefers-color-scheme: dark) {
     div[data-testid="stStatusWidget"] button {
-        background: rgba(45, 45, 45, 0.85) !important;
+        background: rgba(45, 45, 45, 0.9) !important;
         border: 1px solid #666 !important;
         color: #eee !important;
     }
 }
 
-/* 走る/泳ぐマークの親ラッパーを画面中央に帯状に配置 */
+/* 中央配置する進行バー（レーン）のラッパー */
 div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] {
     position: relative !important;
-    width: 280px !important;
-    height: 60px !important;
+    width: 260px !important;
+    height: 50px !important;
     display: flex !important;
     align-items: center !important;
-    overflow: visible !important;
+    justify-content: flex-start !important;
+    overflow: hidden !important;
 }
 
-/* 走る/泳ぐマーク本体：左から右へ一定方向に前進・進行 */
+/* アイコン本体を左から右へスムーズに走行させる */
 div[data-testid="stStatusWidget"] svg,
 div[data-testid="stStatusWidget"] img {
-    width: 48px !important;
-    height: 48px !important;
+    width: 44px !important;
+    height: 44px !important;
     position: absolute !important;
     left: 0 !important;
-    animation: moveLeftToRight 2.0s cubic-bezier(0.4, 0.0, 0.2, 1) infinite !important;
+    animation: progressRun 1.8s cubic-bezier(0.3, 0, 0.7, 1) infinite !important;
 }
 
-/* 進行方向が直感的にわかる左から右へのアニメーション */
-@keyframes moveLeftToRight {
+/* 処理状況テキストの調整 */
+div[data-testid="stStatusWidget"] div {
+    font-size: 15px !important;
+    font-weight: bold !important;
+    color: #1f77b4 !important;
+    margin-top: 10px !important;
+}
+
+/* 左端から右端へ一方向に進むアニメーション定義 */
+@keyframes progressRun {
     0% {
         left: -40px;
         opacity: 0;
-        transform: scale(0.85);
+        transform: scale(0.9);
     }
-    15% {
+    20% {
         opacity: 1;
-        transform: scale(1.1);
+        transform: scale(1.05);
     }
-    85% {
+    80% {
         opacity: 1;
-        transform: scale(1.1);
+        transform: scale(1.05);
     }
     100% {
-        left: 280px;
+        left: 260px;
         opacity: 0;
-        transform: scale(0.85);
+        transform: scale(0.9);
     }
 }
 </style>
@@ -1073,7 +1083,7 @@ def main():
                 st.markdown(f"### 📂 【{d_cat}】の内訳一覧 ({d_m})")
 
             all_recs = get_all_receipts()
-            filtered_drill = [r for r in all_recs if r.get("category") == d_cat]
+            filtered_drill = [r for r in all_recs if r.get("category"] == d_cat]
             if d_m != "全期間":
                 filtered_drill = [r for r in filtered_drill if str(r.get("date", ""))[:7] == d_m]
 
