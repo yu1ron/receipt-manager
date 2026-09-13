@@ -14,22 +14,21 @@ import time
 st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wide")
 
 # ==========================================
-# ローディング画面・中央走行アニメーション CSS
+# ローディング画面・プログレス進行アニメーション CSS
 # ==========================================
 st.markdown("""
 <style>
-/* 処理中 (running) に画面全体を薄暗く/半透明化し、中央で走らせるスタイル */
+/* 処理中 (running) の全画面オーバーレイ */
 div[data-testid="stStatusWidget"] {
     position: fixed !important;
     top: 0 !important;
     left: 0 !important;
     width: 100vw !important;
     height: 100vh !important;
-    background: rgba(255, 255, 255, 0.65) !important;
-    backdrop-filter: blur(3px) !important;
+    background: rgba(255, 255, 255, 0.72) !important;
+    backdrop-filter: blur(4px) !important;
     z-index: 999999 !important;
     display: flex !important;
-    flex-direction: column !important;
     justify-content: center !important;
     align-items: center !important;
     pointer-events: auto !important;
@@ -37,41 +36,74 @@ div[data-testid="stStatusWidget"] {
 
 @media (prefers-color-scheme: dark) {
     div[data-testid="stStatusWidget"] {
-        background: rgba(15, 15, 15, 0.7) !important;
+        background: rgba(15, 15, 15, 0.75) !important;
     }
 }
 
-/* 走る/泳ぐマーク自体のサイズ拡大と中央配置 */
-div[data-testid="stStatusWidget"] svg,
-div[data-testid="stStatusWidget"] img,
-div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] {
-    width: 64px !important;
-    height: 64px !important;
-    transform-origin: center center !important;
-    animation: runAcross 1.8s ease-in-out infinite alternate !important;
-}
-
-/* 処理状況のテキストも中央下部に綺麗に整列 */
+/* ストップボタンは中央から外し、画面右上の端に固定配置 */
 div[data-testid="stStatusWidget"] button {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    font-size: 16px !important;
-    font-weight: bold !important;
-    color: #1f77b4 !important;
-    margin-top: 12px !important;
+    position: absolute !important;
+    top: 20px !important;
+    right: 24px !important;
+    background: rgba(230, 230, 230, 0.8) !important;
+    border: 1px solid #ccc !important;
+    border-radius: 20px !important;
+    padding: 6px 14px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: #444 !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1) !important;
+    cursor: pointer !important;
+    z-index: 1000000 !important;
 }
 
-/* 左から右へ走っていくアニメーション */
-@keyframes runAcross {
-    0% {
-        transform: translateX(-120px) scale(1);
+@media (prefers-color-scheme: dark) {
+    div[data-testid="stStatusWidget"] button {
+        background: rgba(45, 45, 45, 0.85) !important;
+        border: 1px solid #666 !important;
+        color: #eee !important;
     }
-    50% {
-        transform: translateX(0px) scale(1.15);
+}
+
+/* 走る/泳ぐマークの親ラッパーを画面中央に帯状に配置 */
+div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] {
+    position: relative !important;
+    width: 280px !important;
+    height: 60px !important;
+    display: flex !important;
+    align-items: center !important;
+    overflow: visible !important;
+}
+
+/* 走る/泳ぐマーク本体：左から右へ一定方向に前進・進行 */
+div[data-testid="stStatusWidget"] svg,
+div[data-testid="stStatusWidget"] img {
+    width: 48px !important;
+    height: 48px !important;
+    position: absolute !important;
+    left: 0 !important;
+    animation: moveLeftToRight 2.0s cubic-bezier(0.4, 0.0, 0.2, 1) infinite !important;
+}
+
+/* 進行方向が直感的にわかる左から右へのアニメーション */
+@keyframes moveLeftToRight {
+    0% {
+        left: -40px;
+        opacity: 0;
+        transform: scale(0.85);
+    }
+    15% {
+        opacity: 1;
+        transform: scale(1.1);
+    }
+    85% {
+        opacity: 1;
+        transform: scale(1.1);
     }
     100% {
-        transform: translateX(120px) scale(1);
+        left: 280px;
+        opacity: 0;
+        transform: scale(0.85);
     }
 }
 </style>
@@ -777,7 +809,6 @@ def confirm_delete_dialog(receipt_id, store_name, total_amount):
 def show_advice_dialog(target_period, advice_content):
     st.caption(f"対象期間: **{target_period}** の支出傾向を分析した改善提案です。")
     
-    # チャンク描画遅延を防ぐため、1つのコンテナにラップして一括高速レンダリング
     with st.container(height=360):
         st.markdown(advice_content)
         
