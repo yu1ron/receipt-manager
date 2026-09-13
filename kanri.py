@@ -19,34 +19,35 @@ st.set_page_config(page_title="家計簿レシート管理アプリ", layout="wi
 st.markdown("""
 <style>
 /* 処理中 (running) の全画面オーバーレイ */
+/* pointer-events: none によりタップ判定を一切ブロックしないよう修正 */
 div[data-testid="stStatusWidget"] {
     position: fixed !important;
     top: 0 !important;
     left: 0 !important;
     width: 100vw !important;
     height: 100vh !important;
-    background: rgba(255, 255, 255, 0.75) !important;
-    backdrop-filter: blur(4px) !important;
+    background: rgba(255, 255, 255, 0.6) !important;
+    backdrop-filter: blur(2px) !important;
     z-index: 999999 !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
     align-items: center !important;
-    pointer-events: auto !important;
+    pointer-events: none !important; /* スマホのタップを妨害しない */
 }
 
 @media (prefers-color-scheme: dark) {
     div[data-testid="stStatusWidget"] {
-        background: rgba(15, 15, 15, 0.8) !important;
+        background: rgba(15, 15, 15, 0.7) !important;
     }
 }
 
-/* ストップボタンを画面の右上端に固定 */
+/* ストップボタンだけは確実にタップできるようにする */
 div[data-testid="stStatusWidget"] button {
     position: absolute !important;
     top: 20px !important;
     right: 20px !important;
-    background: rgba(230, 230, 230, 0.9) !important;
+    background: rgba(230, 230, 230, 0.95) !important;
     border: 1px solid #ccc !important;
     border-radius: 20px !important;
     padding: 6px 14px !important;
@@ -56,11 +57,12 @@ div[data-testid="stStatusWidget"] button {
     box-shadow: 0 2px 6px rgba(0,0,0,0.15) !important;
     cursor: pointer !important;
     z-index: 1000000 !important;
+    pointer-events: auto !important; /* ボタン単体はタップ可能 */
 }
 
 @media (prefers-color-scheme: dark) {
     div[data-testid="stStatusWidget"] button {
-        background: rgba(45, 45, 45, 0.9) !important;
+        background: rgba(45, 45, 45, 0.95) !important;
         border: 1px solid #666 !important;
         color: #eee !important;
     }
@@ -75,6 +77,7 @@ div[data-testid="stStatusWidget"] [data-testid="stStatusWidgetIcon"] {
     align-items: center !important;
     justify-content: flex-start !important;
     overflow: hidden !important;
+    pointer-events: none !important;
 }
 
 /* アイコン本体を左から右へスムーズに走行させる */
@@ -85,6 +88,7 @@ div[data-testid="stStatusWidget"] img {
     position: absolute !important;
     left: 0 !important;
     animation: progressRun 1.8s cubic-bezier(0.3, 0, 0.7, 1) infinite !important;
+    pointer-events: none !important;
 }
 
 /* 処理状況テキストの調整 */
@@ -93,6 +97,7 @@ div[data-testid="stStatusWidget"] div {
     font-weight: bold !important;
     color: #1f77b4 !important;
     margin-top: 10px !important;
+    pointer-events: none !important;
 }
 
 @keyframes progressRun {
@@ -327,27 +332,30 @@ def analyze_expenses_with_gemini(summary_text, api_keys_input):
         raise last_err
 
 # ==========================================
-# 1. 秘密情報 (secrets.toml) の書き込み・保存
+# 1. 秘密情報 (secrets.toml) の書き込み・保存 (クラウド安全化)
 # ==========================================
 def save_api_key_to_secrets(key_name, key_value):
     if not key_value:
         return
     secrets_dir = ".streamlit"
     secrets_path = os.path.join(secrets_dir, "secrets.toml")
-    os.makedirs(secrets_dir, exist_ok=True)
+    try:
+        os.makedirs(secrets_dir, exist_ok=True)
+        current_secrets = {}
+        if os.path.exists(secrets_path):
+            with open(secrets_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        current_secrets[k.strip()] = v.strip().strip('"').strip("'")
 
-    current_secrets = {}
-    if os.path.exists(secrets_path):
-        with open(secrets_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    current_secrets[k.strip()] = v.strip().strip('"').strip("'")
-
-    current_secrets[key_name] = key_value
-    with open(secrets_path, "w", encoding="utf-8") as f:
-        for k, v in current_secrets.items():
-            f.write(f'{k} = "{v}"\n')
+        current_secrets[key_name] = key_value
+        with open(secrets_path, "w", encoding="utf-8") as f:
+            for k, v in current_secrets.items():
+                f.write(f'{k} = "{v}"\n')
+    except OSError:
+        # Streamlit Cloud 上のファイル書込不可エラーを安全に無視
+        pass
 
 # ==========================================
 # 2. データベース操作
@@ -1142,7 +1150,6 @@ def main():
                 st.markdown(f"### 📂 【{d_cat}】の内訳一覧 ({d_m})")
 
             all_recs = get_all_receipts()
-            # 修正箇所: r.get("category") に変更
             filtered_drill = [r for r in all_recs if r.get("category") == d_cat]
             if d_m != "全期間":
                 filtered_drill = [r for r in filtered_drill if str(r.get("date", ""))[:7] == d_m]
