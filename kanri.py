@@ -1002,7 +1002,6 @@ def main():
             if summary_data:
                 available_months = ["全期間"] + [row[0] for row in summary_data]
                 
-                # セッション初期値の保証
                 if "dashboard_month_choice" not in st.session_state or st.session_state["dashboard_month_choice"] not in available_months:
                     st.session_state["dashboard_month_choice"] = available_months[0]
 
@@ -1016,12 +1015,10 @@ def main():
                         default=st.session_state["dashboard_month_choice"],
                         key="pills_widget_selection"
                     )
-                    # 選択値が存在する場合はセッションに即時同期
                     if chosen_month and chosen_month != st.session_state["dashboard_month_choice"]:
                         st.session_state["dashboard_month_choice"] = chosen_month
                         st.rerun()
 
-                # 確定された表示月を単一変数として扱う
                 active_m = st.session_state["dashboard_month_choice"]
 
                 with c_top_btn:
@@ -1066,7 +1063,7 @@ def main():
                     )
                     st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
 
-                # --- 右側: カテゴリー別内訳（active_m に完全同期） ---
+                # --- 右側: カテゴリー別内訳 ---
                 with col_chart_right:
                     st.markdown(f"#### 📊 カテゴリー別内訳 ({active_m})")
                     
@@ -1077,7 +1074,6 @@ def main():
                         key="cat_chart_type"
                     )
 
-                    # active_m を確実に引数として渡す
                     cat_data = get_category_summary(month_str=active_m)
 
                     if cat_data:
@@ -1172,22 +1168,24 @@ def main():
                         st.info(f"{active_m} のデータがありません。")
 
                 st.write("---")
-                # カテゴリー別詳細 & ワンタップジャンプ
+                # カテゴリー別詳細（4項目分のみ表示・内部スクロールコンテナ化）
                 if cat_data:
-                    st.markdown(f"##### 📑 {active_m} カテゴリー別内訳（タップして履歴詳細を表示）")
-                    for row_idx, r in df_cat.iterrows():
-                        c_name = r["カテゴリー"]
-                        c_amt = int(r["金額"])
-                        pct_val = (c_amt / total_cat_amt * 100) if total_cat_amt > 0 else 0
-                        
-                        col_l, col_r = st.columns([3, 1])
-                        with col_l:
-                            st.markdown(f"**{c_name}**: ¥{c_amt:,} ({pct_val:.1f}%)")
-                        with col_r:
-                            if st.button("🔍 履歴を見る", key=f"jump_{c_name}_{row_idx}", use_container_width=True):
-                                st.session_state["drilldown_cat"] = c_name
-                                st.session_state["drilldown_month"] = active_m
-                                st.rerun()
+                    st.markdown(f"##### 📑 {active_m} カテゴリー別内訳（スクロール可能・タップして履歴表示）")
+                    # 4項目相当の高さ(240px)で固定し、枠内スクロールを有効化
+                    with st.container(height=240):
+                        for row_idx, r in df_cat.iterrows():
+                            c_name = r["カテゴリー"]
+                            c_amt = int(r["金額"])
+                            pct_val = (c_amt / total_cat_amt * 100) if total_cat_amt > 0 else 0
+                            
+                            col_l, col_r = st.columns([3, 1])
+                            with col_l:
+                                st.markdown(f"**{c_name}**: ¥{c_amt:,} ({pct_val:.1f}%)")
+                            with col_r:
+                                if st.button("🔍 履歴を見る", key=f"jump_{c_name}_{row_idx}", use_container_width=True):
+                                    st.session_state["drilldown_cat"] = c_name
+                                    st.session_state["drilldown_month"] = active_m
+                                    st.rerun()
 
                 # --- AI家計簿診断エリア ---
                 st.write("---")
