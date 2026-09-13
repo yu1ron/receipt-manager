@@ -41,7 +41,7 @@ div[data-testid="stStatusWidget"] {
     }
 }
 
-/* ストップボタンを画面の右上端に確実に固定 */
+/* ストップボタンを画面の右上端に固定 */
 div[data-testid="stStatusWidget"] button {
     position: absolute !important;
     top: 20px !important;
@@ -95,7 +95,6 @@ div[data-testid="stStatusWidget"] div {
     margin-top: 10px !important;
 }
 
-/* 左端から右端へ一方向に進むアニメーション定義 */
 @keyframes progressRun {
     0% {
         left: -40px;
@@ -221,6 +220,12 @@ Important Extraction Rules:
 3. Do not include summary/tax rows inside items list.
 """
 
+def extract_gemini_keys(api_keys_input):
+    """カンマ、スペース、改行で区切られたAPIキー文字列をリスト化"""
+    if not api_keys_input:
+        return []
+    return [k.strip() for k in re.split(r'[, \n]+', api_keys_input.strip()) if k.strip()]
+
 def infer_category_rule(store_name, items, default_category="その他"):
     item_names = []
     for it in items:
@@ -275,14 +280,15 @@ def infer_category_rule(store_name, items, default_category="その他"):
 
     return "その他"
 
-def analyze_expenses_with_gemini(summary_text, api_key):
-    if not api_key:
-        raise ValueError("Gemini APIキーが未設定です。")
+def analyze_expenses_with_gemini(summary_text, api_keys_input):
+    if not api_keys_input:
+        raise ValueError("Gemini APIキーが未設定です。サイドバーで設定してください。")
     if genai is None:
         raise ImportError("google-genai パッケージが未導入です。")
 
-    clean_key = "".join(c for c in api_key.strip() if 32 <= ord(c) <= 126)
-    client = genai.Client(api_key=clean_key)
+    keys = extract_gemini_keys(api_keys_input)
+    if not keys:
+        raise ValueError("有効なGemini APIキーが設定されていません。")
 
     prompt = f"""
 あなたはプロのファイナンシャルプランナー（FP）兼、親しみやすい家計改善アドバイザーです。
@@ -300,11 +306,25 @@ def analyze_expenses_with_gemini(summary_text, api_key):
 ※批判的にならず、前向きに楽しく節約できるトーンでアドバイスを作成してください。
 ※「特別費」がある場合は、突発的・一時的な大型出費として日常の生活費と区別して評価してください。
 """
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt
-    )
-    return response.text
+    last_err = None
+    for k_idx, raw_k in enumerate(keys):
+        clean_key = "".join(c for c in raw_k if 32 <= ord(c) <= 126)
+        client = genai.Client(api_key=clean_key)
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt
+            )
+            return response.text
+        except Exception as e:
+            err_str = str(e)
+            last_err = e
+            if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and k_idx < len(keys) - 1:
+                st.toast(f"⚠️ APIキー [{k_idx+1}] の利用上限に達したため、キー [{k_idx+2}] へ切り替えます。")
+                continue
+            raise e
+    if last_err:
+        raise last_err
 
 # ==========================================
 # 1. 秘密情報 (secrets.toml) の書き込み・保存
@@ -600,16 +620,18 @@ def delete_receipt(receipt_id):
     return True
 
 # ==========================================
-# 3. 解析エンジン処理
+# 3. 解析エンジン処理 (複数キー・自動切替対応)
 # ==========================================
-def parse_with_gemini(uploaded_file, api_key, max_retries=4):
-    if not api_key:
+def parse_with_gemini(uploaded_file, api_keys_input, max_retries_per_key=2):
+    if not api_keys_input:
         raise ValueError("Gemini APIキーが未設定です。サイドバーで設定してください。")
     if genai is None:
         raise ImportError("google-genai パッケージが未導入です。")
 
-    clean_key = "".join(c for c in api_key.strip() if 32 <= ord(c) <= 126)
-    client = genai.Client(api_key=clean_key)
+    keys = extract_gemini_keys(api_keys_input)
+    if not keys:
+        raise ValueError("有効なGemini APIキーが見つかりませんでした。")
+
     uploaded_file.seek(0)
     file_name = uploaded_file.name.lower()
 
@@ -635,34 +657,53 @@ def parse_with_gemini(uploaded_file, api_key, max_retries=4):
             del img
         mime_type = "image/jpeg"
 
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), JSON_PROMPT],
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            text_content = response.text.strip()
-            if text_content.startswith("```json"):
-                text_content = text_content[7:]
-            if text_content.endswith("```"):
-                text_content = text_content[:-3]
-            parsed_data = json.loads(text_content.strip())
-            return parsed_data[0] if isinstance(parsed_data, list) and len(parsed_data) > 0 else parsed_data
-        except Exception as e:
-            if ("503" in str(e) or "UNAVAILABLE" in str(e) or "429" in str(e)) and attempt < max_retries - 1:
-                time.sleep((attempt + 1) * 2)
-                continue
-            raise e
+    last_error = None
+    for k_idx, raw_k in enumerate(keys):
+        clean_key = "".join(c for c in raw_k if 32 <= ord(c) <= 126)
+        client = genai.Client(api_key=clean_key)
+        
+        for attempt in range(max_retries_per_key):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-3.6-flash",
+                    contents=[types.Part.from_bytes(data=file_bytes, mime_type=mime_type), JSON_PROMPT],
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
+                )
+                text_content = response.text.strip()
+                if text_content.startswith("```json"):
+                    text_content = text_content[7:]
+                if text_content.endswith("```"):
+                    text_content = text_content[:-3]
+                parsed_data = json.loads(text_content.strip())
+                return parsed_data[0] if isinstance(parsed_data, list) and len(parsed_data) > 0 else parsed_data
 
-def parse_email_text_with_gemini(email_text, api_key, max_retries=3):
-    if not api_key:
+            except Exception as e:
+                err_str = str(e)
+                last_error = e
+                if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str):
+                    if k_idx < len(keys) - 1:
+                        st.toast(f"⚠️ APIキー [{k_idx+1}] の利用枠に達しました。キー [{k_idx+2}] へ自動切替します...")
+                        break
+                    else:
+                        raise Exception(f"登録されたすべてのGemini APIキー（{len(keys)}件）で上限に達しました。")
+                elif ("503" in err_str or "UNAVAILABLE" in err_str) and attempt < max_retries_per_key - 1:
+                    time.sleep(2)
+                    continue
+                else:
+                    raise e
+
+    if last_error:
+        raise last_error
+
+def parse_email_text_with_gemini(email_text, api_keys_input, max_retries_per_key=2):
+    if not api_keys_input:
         raise ValueError("Gemini APIキーが未設定です。サイドバーで設定してください。")
     if genai is None:
         raise ImportError("google-genai パッケージが未導入です。")
 
-    clean_key = "".join(c for c in api_key.strip() if 32 <= ord(c) <= 126)
-    client = genai.Client(api_key=clean_key)
+    keys = extract_gemini_keys(api_keys_input)
+    if not keys:
+        raise ValueError("有効なGemini APIキーが見つかりませんでした。")
 
     prompt = f"""
 以下はECサイトやWebサービス、店舗等から届いた「購入確認・注文完了・領収メール」の本文です。
@@ -671,25 +712,43 @@ def parse_email_text_with_gemini(email_text, api_key, max_retries=3):
 【メール本文】
 {email_text}
 """
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=[prompt, JSON_PROMPT],
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            text_content = response.text.strip()
-            if text_content.startswith("```json"):
-                text_content = text_content[7:]
-            if text_content.endswith("```"):
-                text_content = text_content[:-3]
-            parsed_data = json.loads(text_content.strip())
-            return parsed_data[0] if isinstance(parsed_data, list) and len(parsed_data) > 0 else parsed_data
-        except Exception as e:
-            if ("503" in str(e) or "UNAVAILABLE" in str(e) or "429" in str(e)) and attempt < max_retries - 1:
-                time.sleep((attempt + 1) * 2)
-                continue
-            raise e
+    last_error = None
+    for k_idx, raw_k in enumerate(keys):
+        clean_key = "".join(c for c in raw_k if 32 <= ord(c) <= 126)
+        client = genai.Client(api_key=clean_key)
+        
+        for attempt in range(max_retries_per_key):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-3.6-flash",
+                    contents=[prompt, JSON_PROMPT],
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
+                )
+                text_content = response.text.strip()
+                if text_content.startswith("```json"):
+                    text_content = text_content[7:]
+                if text_content.endswith("```"):
+                    text_content = text_content[:-3]
+                parsed_data = json.loads(text_content.strip())
+                return parsed_data[0] if isinstance(parsed_data, list) and len(parsed_data) > 0 else parsed_data
+
+            except Exception as e:
+                err_str = str(e)
+                last_error = e
+                if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str):
+                    if k_idx < len(keys) - 1:
+                        st.toast(f"⚠️ APIキー [{k_idx+1}] の利用枠に達しました。キー [{k_idx+2}] へ自動切替します...")
+                        break
+                    else:
+                        raise Exception(f"登録されたすべてのGemini APIキー（{len(keys)}件）で上限に達しました。")
+                elif ("503" in err_str or "UNAVAILABLE" in err_str) and attempt < max_retries_per_key - 1:
+                    time.sleep(2)
+                    continue
+                else:
+                    raise e
+
+    if last_error:
+        raise last_error
 
 def parse_with_openai(uploaded_file, api_key, max_retries=3):
     if not api_key:
@@ -855,16 +914,16 @@ def main():
 
         if engine_choice == "Gemini API (推奨)":
             with st.form("gemini_key_form"):
-                inp_gemini_key = st.text_input(
-                    "Gemini APIキー",
+                inp_gemini_key = st.text_area(
+                    "Gemini APIキー (改行またはカンマで複数登録可能)",
                     value=st.session_state.get("gemini_key", default_gemini_key),
-                    type="password",
-                    autocomplete="off"
+                    height=100,
+                    help="複数のキーを登録すると、1日の利用上限（429エラー）に達した際に自動で次のキーに切り替わります。"
                 )
-                if st.form_submit_button("💾 このキーを保存する"):
+                if st.form_submit_button("💾 このキー一覧を保存する"):
                     save_api_key_to_secrets("GEMINI_API_KEY", inp_gemini_key)
                     st.session_state["gemini_key"] = inp_gemini_key
-                    st.success("secrets.toml に保存しました！")
+                    st.success("APIキーを保存しました！")
                     st.rerun()
             gemini_api_key = st.session_state.get("gemini_key", default_gemini_key)
 
@@ -1083,6 +1142,7 @@ def main():
                 st.markdown(f"### 📂 【{d_cat}】の内訳一覧 ({d_m})")
 
             all_recs = get_all_receipts()
+            # 修正箇所: r.get("category") に変更
             filtered_drill = [r for r in all_recs if r.get("category") == d_cat]
             if d_m != "全期間":
                 filtered_drill = [r for r in filtered_drill if str(r.get("date", ""))[:7] == d_m]
@@ -1117,7 +1177,6 @@ def main():
                 if "dashboard_month_choice" not in st.session_state or st.session_state["dashboard_month_choice"] not in available_months:
                     st.session_state["dashboard_month_choice"] = available_months[0]
 
-                # 画面上部：月選択ピルとクイックAI診断ボタン
                 c_top_pill, c_top_btn = st.columns([3, 1.2])
                 with c_top_pill:
                     chosen_month = st.pills(
@@ -1139,7 +1198,6 @@ def main():
 
                 col_chart_left, col_chart_right = st.columns([1, 1])
 
-                # --- 左側: 月別支出推移 ---
                 with col_chart_left:
                     latest_m, latest_tot, _, _ = summary_data[0]
                     st.markdown(f"#### 📈 月別支出推移 (最新: {latest_m} ¥{latest_tot:,})")
@@ -1175,7 +1233,6 @@ def main():
                     )
                     st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
 
-                # --- 右側: カテゴリー別内訳 ---
                 with col_chart_right:
                     st.markdown(f"#### 📊 カテゴリー別内訳 ({active_m})")
                     
@@ -1288,7 +1345,6 @@ def main():
                         st.info(f"{active_m} のデータがありません。")
 
                 st.write("---")
-                # カテゴリー別詳細（4項目分固定・内部スクロールコンテナ）
                 if cat_data:
                     st.markdown(f"##### 📑 {active_m} カテゴリー別内訳（スクロール可能・タップして履歴表示）")
                     with st.container(height=240):
